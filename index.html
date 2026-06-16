@@ -406,13 +406,16 @@ function renderPool(){
     ${leads.length? `<table><thead><tr>
         <th style="cursor:pointer;user-select:none" onclick="setPoolSort('name')">Name${sortArrow('name')}</th>
         <th style="cursor:pointer;user-select:none" onclick="setPoolSort('state')">State${sortArrow('state')}</th>
-        <th>Age</th><th>Status</th><th>Connected by</th><th>Calls</th><th></th></tr></thead><tbody>
+        <th>Age</th>
+        <th style="cursor:pointer;user-select:none" onclick="setPoolSort('status')">Status${sortArrow('status')}</th>
+        <th style="cursor:pointer;user-select:none" onclick="setPoolSort('appt')">Appointment${sortArrow('appt')}</th>
+        <th>Connected by</th><th></th></tr></thead><tbody>
       ${leads.map(l=>`<tr>
         <td><a href="#" onclick="openLead('${l.id}');return false"><b>${l.name}</b></a><div class="muted">${l.phone}</div></td>
         <td>${l.state}</td><td>${l.age}</td>
         <td><span class="tag t-${l.status}">${l.status}</span></td>
+        <td>${apptCell(l)}</td>
         <td>${touchersCell(l)}</td>
-        <td>${l.times_worked}×</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn s sm" onclick="openLead('${l.id}')">Notes</button>
           <button class="btn g sm" onclick="markCalled('${l.id}')">📞 Called</button>
@@ -817,13 +820,18 @@ async function commitImport(){
 function sortLeads(leads){
   const {key,dir}=S.poolSort||{key:"name",dir:"asc"};
   const mul=dir==="desc"?-1:1;
+  // value used for comparison per sort key. Leads with no appointment sort
+  // to the bottom (ascending) so booked leads surface first.
+  const val=l=>{
+    if(key==="appt") return l.followup_date? (l.followup_date+(l.followup_time||"")) : "9999-99-99";
+    return String(l[key]||"").toLowerCase();
+  };
   return leads.slice().sort((a,b)=>{
-    const av=String(a[key]||"").toLowerCase(), bv=String(b[key]||"").toLowerCase();
+    const av=val(a), bv=val(b);
     if(av<bv) return -1*mul;
     if(av>bv) return 1*mul;
-    // tie-breaker: name
     const an=String(a.name||"").toLowerCase(), bn=String(b.name||"").toLowerCase();
-    return an<bn?-1:an>bn?1:0;
+    return an<bn?-1:an>bn?1:0; // tie-breaker: name
   });
 }
 function setPoolSort(key){
@@ -837,13 +845,20 @@ function sortArrow(key){
   if(s.key!==key) return ' <span class="muted" style="font-weight:400">↕</span>';
   return s.dir==="asc"? ' ▲':' ▼';
 }
-// Renders who has made contact with a lead, plus who called last.
+// Renders who has made contact with a lead, the call count, and who called last.
 function touchersCell(l){
   const t=(l.touched_by||[]);
-  if(!t.length) return '<span class="muted">— not contacted</span>';
+  const calls=l.times_worked? `${l.times_worked} call${l.times_worked===1?'':'s'}` : "no calls";
+  if(!t.length) return `<span class="muted">— not contacted</span><div class="muted" style="font-size:10px;margin-top:2px">${calls}</div>`;
   const pills=t.map(n=>`<span class="pill" style="margin:1px 3px 1px 0">${escapeHtml(n)}</span>`).join("");
-  const last=l.last_called_by? `<div class="muted" style="font-size:10px;margin-top:2px">last call: ${escapeHtml(l.last_called_by)}${l.last_called_date?' · '+fmtDate(l.last_called_date):''}</div>`:'';
-  return pills+last;
+  const last=l.last_called_by? ` · last: ${escapeHtml(l.last_called_by)}${l.last_called_date?' '+fmtDate(l.last_called_date):''}`:'';
+  return pills+`<div class="muted" style="font-size:10px;margin-top:2px">${calls}${last}</div>`;
+}
+// Shared appointment / follow-up visibility — everyone sees when a lead is
+// booked and by whom.
+function apptCell(l){
+  if(!l.followup_date) return '<span class="muted">—</span>';
+  return schedBadge(l)+`<div class="muted" style="font-size:10px;margin-top:2px">${l.followup_kind==='appointment'?'Appt':'Follow-up'} · ${escapeHtml(l.followup_set_by||'')}</div>`;
 }
 async function addAgent(){
   const name=document.getElementById("agName").value.trim();
