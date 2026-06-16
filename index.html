@@ -504,7 +504,7 @@ function renderPool(){
         <th style="cursor:pointer;user-select:none" onclick="setPoolSort('appt')">Appointment${sortArrow('appt')}</th>
         <th>Connected by</th><th></th></tr></thead><tbody>
       ${leads.map(l=>`<tr>
-        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${escapeHtml(l.name)}</b></a>${cbBadge(l)}<div class="muted">${escapeHtml(l.phone)}</div></td>
+        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${escapeHtml(l.name)}</b></a>${cbBadge(l)}<div class="muted">${escapeHtml(l.phone)}</div><div class="muted" style="font-size:10px">⬆ ${escapeHtml(l.imported_by||'—')}</div></td>
         <td>${escapeHtml(l.state)}</td><td>${l.age}</td>
         <td><span class="tag t-${l.status}">${l.status}</span></td>
         <td>${apptCell(l)}</td>
@@ -565,7 +565,7 @@ function renderMine(){
         const age=leadAgeDays(l, meName());
         const stale= age>STALE_DAYS? ` <span class="tag" style="background:var(--red)">${age}d — stale</span>` : (age>=STALE_DAYS-1? ` <span class="muted" style="font-size:10px">${age}d</span>`:"");
         return `<tr>
-        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${escapeHtml(l.name)}</b></a>${cbBadge(l)}${stale}<div class="muted">${escapeHtml(l.phone)}</div></td>
+        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${escapeHtml(l.name)}</b></a>${cbBadge(l)}${stale}<div class="muted">${escapeHtml(l.phone)}</div><div class="muted" style="font-size:10px">⬆ ${escapeHtml(l.imported_by||'—')}</div></td>
         <td>${l.state}</td><td>${l.times_worked}×</td><td>${fu}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn s sm" onclick="openLead('${l.id}')">Open</button>
@@ -1333,6 +1333,7 @@ function openLead(id){
    <div class="modal" style="max-width:560px">
      <h3>${escapeHtml(l.name)}</h3>
      <div class="ms">${escapeHtml(l.phone||'—')}${l.email?' · ✉ '+escapeHtml(l.email):''} · ${escapeHtml(l.state||'')} · age ${l.age||'—'}${l.gender?' · '+escapeHtml(l.gender):''}${l.dob?' · DOB '+escapeHtml(l.dob):''} · <span class="tag t-${l.status}">${l.status}</span>${cbBadge(l)}${l.dnc?' <span class="tag" style="background:var(--red)">⛔ DNC</span>':''}${l.last_disposition?' <span class="pill">'+escapeHtml(l.last_disposition)+'</span>':''}</div>
+     <div class="muted" style="font-size:11px;margin:-8px 0 10px">⬆ Imported by <b>${escapeHtml(l.imported_by||'—')}</b>${l.imported_at?' · '+fmtDate(l.imported_at):''}</div>
      <div style="margin:-6px 0 12px">
        ${l.chargebackClient?'<span class="muted" style="font-size:11px">Flagged as a former client who charged back.</span>':'<span class="muted" style="font-size:11px">Not flagged as a charged-back client.</span>'}
        ${canEdit?`<button class="btn s sm" style="margin-left:8px" onclick="toggleChargebackClient('${l.id}')">${l.chargebackClient?'Remove charge-back flag':'⚡ Mark charged-back client'}</button>`:''}
