@@ -442,7 +442,7 @@ function renderPool(){
         <th style="cursor:pointer;user-select:none" onclick="setPoolSort('appt')">Appointment${sortArrow('appt')}</th>
         <th>Connected by</th><th></th></tr></thead><tbody>
       ${leads.map(l=>`<tr>
-        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${l.name}</b></a><div class="muted">${l.phone}</div></td>
+        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${l.name}</b></a>${cbBadge(l)}<div class="muted">${l.phone}</div></td>
         <td>${l.state}</td><td>${l.age}</td>
         <td><span class="tag t-${l.status}">${l.status}</span></td>
         <td>${apptCell(l)}</td>
@@ -471,7 +471,7 @@ function renderMine(){
         const age=leadAgeDays(l, meName());
         const stale= age>STALE_DAYS? ` <span class="tag" style="background:var(--red)">${age}d — stale</span>` : (age>=STALE_DAYS-1? ` <span class="muted" style="font-size:10px">${age}d</span>`:"");
         return `<tr>
-        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${l.name}</b></a>${stale}<div class="muted">${l.phone}</div></td>
+        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${l.name}</b></a>${cbBadge(l)}${stale}<div class="muted">${l.phone}</div></td>
         <td>${l.state}</td><td>${l.times_worked}×</td><td>${fu}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn s sm" onclick="openLead('${l.id}')">Open</button>
@@ -904,6 +904,11 @@ function apptCell(l){
   if(!l.followup_date) return '<span class="muted">—</span>';
   return schedBadge(l)+`<div class="muted" style="font-size:10px;margin-top:2px">${l.followup_kind==='appointment'?'Appt':'Follow-up'} · ${escapeHtml(l.followup_set_by||'')}</div>`;
 }
+// "Charged-back client" badge — set by the importer/admin to flag that this
+// lead is back in the pool because they previously bought and charged back.
+function cbBadge(l){
+  return l.chargebackClient? `<span class="tag" style="background:#9a6a00;margin-left:4px" title="Former client — previously bought and charged back">⚡ Charged back</span>` : "";
+}
 async function addAgent(){
   const name=document.getElementById("agName").value.trim();
   const team=document.getElementById("agTeam").value.trim()||"Unassigned";
@@ -1008,7 +1013,11 @@ function openLead(id){
   <div class="modal-bg" onclick="if(event.target===this)closeModal()">
    <div class="modal" style="max-width:560px">
      <h3>${escapeHtml(l.name)}</h3>
-     <div class="ms">${escapeHtml(l.phone||'—')}${l.email?' · ✉ '+escapeHtml(l.email):''} · ${escapeHtml(l.state||'')} · age ${l.age||'—'} · <span class="tag t-${l.status}">${l.status}</span></div>
+     <div class="ms">${escapeHtml(l.phone||'—')}${l.email?' · ✉ '+escapeHtml(l.email):''} · ${escapeHtml(l.state||'')} · age ${l.age||'—'} · <span class="tag t-${l.status}">${l.status}</span>${cbBadge(l)}</div>
+     <div style="margin:-6px 0 12px">
+       ${l.chargebackClient?'<span class="muted" style="font-size:11px">Flagged as a former client who charged back.</span>':'<span class="muted" style="font-size:11px">Not flagged as a charged-back client.</span>'}
+       ${canEdit?`<button class="btn s sm" style="margin-left:8px" onclick="toggleChargebackClient('${l.id}')">${l.chargebackClient?'Remove charge-back flag':'⚡ Mark charged-back client'}</button>`:''}
+     </div>
      ${canEdit?`
      <div style="background:#f4f6f5;border:1px solid var(--rule);border-radius:10px;padding:10px 12px;margin-bottom:14px">
        <div style="font-size:10.5px;color:var(--muted);font-weight:700;letter-spacing:.4px;margin-bottom:6px">EDIT CONTACT · ${isOwner()?'admin':'you imported this lead'}</div>
@@ -1084,6 +1093,13 @@ async function saveLeadContact(id){
   const email=(document.getElementById("ed_email").value||"").trim();
   if(!name){ alert("Name can't be empty."); return; }
   l.name=name; l.phone=phone; l.email=email;
+  await saveLeads(); openLead(id); render();
+}
+// Toggle the charged-back-client flag. Importer or admin only.
+async function toggleChargebackClient(id){
+  const l=S.leads.find(x=>x.id===id); if(!l) return;
+  if(!(isOwner() || (l.imported_by && l.imported_by===meName()))){ alert("Only an admin or the agent who imported this lead can change this flag."); return; }
+  l.chargebackClient=!l.chargebackClient;
   await saveLeads(); openLead(id); render();
 }
 // Admin-only: delete a single note by its original index.
