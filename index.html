@@ -711,7 +711,7 @@ function renderAdmin(){
         const stColor= st==="pending"?"var(--gold)":st==="rejected"?"var(--red)":(st==="owner"?"var(--ink)":"var(--accent)");
         return `<tr><td><b>${escapeHtml(a.name)}</b></td><td><span class="pill" style="font-family:monospace">${escapeHtml(a.username||'—')}</span></td><td><span class="pill">${escapeHtml(a.team||'')}</span></td><td class="muted">${escapeHtml(a.upline||'')}</td>
         <td><span class="tag" style="background:${stColor}">${st}</span></td>
-        <td style="text-align:right;white-space:nowrap">${a.role==="owner"?'':`${a.status==="rejected"?`<button class="btn s sm" onclick="setAgentStatus('${a.id}','active')">Reinstate</button> `:''}<button class="btn d sm" onclick="removeAgent('${a.id}')">Remove</button>`}</td></tr>`;}).join("")}
+        <td style="text-align:right;white-space:nowrap">${a.role==="owner"?'':`<button class="btn s sm" onclick="openAgentEdit('${a.id}')">Assign</button> ${a.status==="rejected"?`<button class="btn s sm" onclick="setAgentStatus('${a.id}','active')">Reinstate</button> `:''}<button class="btn d sm" onclick="removeAgent('${a.id}')">Remove</button>`}</td></tr>`;}).join("")}
     </tbody></table>
     <div class="grid2" style="margin-top:12px">
       <div class="field"><label>Full name</label><input id="agName" placeholder="New agent name"></div>
@@ -1103,6 +1103,30 @@ async function removeAgent(id){
   const a=agentById(id); if(!a || a.role==="owner") return;
   if(!confirm("Remove "+a.name+"? Their login is deleted.")) return;
   S.agents=S.agents.filter(x=>x.id!==id); await saveAgents(); render();
+}
+// Admin: assign an agent to a team and/or upline (e.g. after approving them).
+function openAgentEdit(id){
+  if(!isOwner()) return;
+  const a=agentById(id); if(!a) return;
+  const uplines=["Owner"].concat(S.agents.filter(x=>x.id!==id && x.role!=="owner").map(x=>x.name));
+  document.getElementById("modalRoot").innerHTML=`
+  <div class="modal-bg" onclick="if(event.target===this)closeModal()">
+   <div class="modal" style="max-width:420px">
+     <h3>Assign ${escapeHtml(a.name)}</h3>
+     <div class="ms">Set this agent's team and who they report to.</div>
+     <div class="field"><label>Team</label><input id="ag_team" value="${escapeHtml(a.team||'')}" placeholder="Alpha / Bravo…"></div>
+     <div class="field"><label>Upline (their recruiter / manager)</label>
+       <select id="ag_upline">${uplines.map(u=>`<option ${u===a.upline?'selected':''}>${escapeHtml(u)}</option>`).join("")}</select></div>
+     <div class="mfoot"><button class="btn s" onclick="closeModal()">Cancel</button><button class="btn p" onclick="saveAgentEdit('${a.id}')">Save</button></div>
+   </div>
+  </div>`;
+}
+async function saveAgentEdit(id){
+  if(!isOwner()){ alert("Admins only."); return; }
+  const a=agentById(id); if(!a) return;
+  a.team=(document.getElementById("ag_team").value||"").trim()||"Unassigned";
+  a.upline=document.getElementById("ag_upline").value;
+  await saveAgents(); closeModal();
 }
 async function reseed(){ if(!confirm("Reset to demo data? This replaces current data.")) return; seed(); await saveLeads(); await saveDeals(); await saveAgents(); S.session=S.agents[0].id; S.me=S.session; await saveSession(); fillMe(); render(); }
 async function wipe(){ if(!confirm("Clear ALL leads, deals, and agents?")) return; S.leads=[];S.deals=[];S.agents=[]; await saveLeads();await saveDeals();await saveAgents(); seed(); await saveLeads();await saveDeals();await saveAgents(); S.session=S.agents[0].id; S.me=S.session; await saveSession(); fillMe(); render(); }
