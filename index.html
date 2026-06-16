@@ -124,6 +124,7 @@
       <button data-v="import"><span class="ic">⬆</span><span class="lbl">Import</span></button>
       <button data-v="mine"><span class="ic">◉</span><span class="lbl">My Pipeline</span></button>
       <button data-v="followups"><span class="ic">◷</span><span class="lbl">Follow-ups</span></button>
+      <button data-v="calendar"><span class="ic">▤</span><span class="lbl">Calendar</span></button>
       <button data-v="board"><span class="ic">★</span><span class="lbl">Leaderboard</span></button>
       <button data-v="command" class="owner-only"><span class="ic">◆</span><span class="lbl">Command</span></button>
       <button data-v="admin" class="owner-only"><span class="ic">⚙</span><span class="lbl">Admin</span></button>
@@ -224,7 +225,8 @@ const DB = {
   }
 };
 
-let S = { leads:[], deals:[], agents:[], me:null, session:null, view:"dash", boardMode:"agent", cpl:1, poolSort:{key:"name",dir:"asc"}, poolStateFilter:"" };
+let S = { leads:[], deals:[], agents:[], me:null, session:null, view:"dash", boardMode:"agent", cpl:1, poolSort:{key:"name",dir:"asc"}, poolStateFilter:"", poolSearch:"", calRef:null };
+const DISPOSITIONS = ["No answer","Voicemail","Callback","Not interested","Wrong number","DNC"];
 
 /* ---------- seed ---------- */
 function seed(){
@@ -375,11 +377,11 @@ function withinDays(dateStr, days){
   const d=new Date(dateStr), now=new Date();
   return (now - d)/(1000*60*60*24) <= days;
 }
-function dialable(){ return S.leads.filter(l=>l.status==="available"||l.status==="reopened"); }
+function dialable(){ return S.leads.filter(l=>(l.status==="available"||l.status==="reopened") && !l.dnc); }
 // "My Pipeline" = open leads I've personally made contact with (called),
-// not sold/dead, and not removed from my pipeline. Leads are never locked
+// not sold/dead/DNC, and not removed from my pipeline. Leads are never locked
 // to me until I sell them.
-function myWorking(){ return S.leads.filter(l=> (l.touched_by||[]).includes(meName()) && l.status!=="closed" && l.status!=="dead" && !((l.dismissed_by||[]).includes(meName()))); }
+function myWorking(){ return S.leads.filter(l=> (l.touched_by||[]).includes(meName()) && l.status!=="closed" && l.status!=="dead" && !l.dnc && !((l.dismissed_by||[]).includes(meName()))); }
 function activeDeals(){ return S.deals.filter(d=>d.status==="active"); }
 
 /* ---------- pipeline staleness / upline alerts ---------- */
@@ -426,9 +428,17 @@ function lastImportDate(agentName){
   return latest;
 }
 function setPoolState(v){ S.poolStateFilter=v||""; render(); }
+function setPoolSearch(v){
+  S.poolSearch=v;
+  render();
+  // re-render replaces the input, so restore focus + caret to the end
+  const el=document.getElementById("poolSearch");
+  if(el){ el.focus(); try{ el.setSelectionRange(v.length,v.length); }catch(e){} }
+}
+function clearPoolFilters(){ S.poolSearch=""; S.poolStateFilter=""; render(); }
 
 /* ---------- render router ---------- */
-const TITLES = {dash:"Dashboard",pool:"Lead Pool",import:"Import Leads",mine:"My Pipeline",followups:"Follow-ups",board:"Leaderboard",command:"Command Center",admin:"Admin"};
+const TITLES = {dash:"Dashboard",pool:"Lead Pool",import:"Import Leads",mine:"My Pipeline",followups:"Follow-ups",calendar:"Calendar",board:"Leaderboard",command:"Command Center",admin:"Admin"};
 function render(){
   document.getElementById("ptitle").textContent = TITLES[S.view];
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on", b.dataset.v===S.view));
@@ -438,6 +448,7 @@ function render(){
   else if(S.view==="import") v.innerHTML=renderImport();
   else if(S.view==="mine") v.innerHTML=renderMine();
   else if(S.view==="followups") v.innerHTML=renderFollowups();
+  else if(S.view==="calendar") v.innerHTML=renderCalendar();
   else if(S.view==="board") v.innerHTML=renderBoard();
   else if(S.view==="command") v.innerHTML=renderCommand();
   else if(S.view==="admin") v.innerHTML=renderAdmin();
@@ -490,20 +501,29 @@ function renderDash(){
 /* ---------- LEAD POOL ---------- */
 function renderPool(){
   const all = dialable();
+  const q = (S.poolSearch||"").trim().toLowerCase();
+  const qDigits = q.replace(/\D/g,"");
   const states = Array.from(new Set(all.map(l=>l.state).filter(Boolean))).sort();
   const filter = S.poolStateFilter||"";
-  const filtered = filter? all.filter(l=>l.state===filter) : all;
+  let filtered = filter? all.filter(l=>l.state===filter) : all;
+  if(q){ filtered = filtered.filter(l=>
+    (l.name||"").toLowerCase().includes(q) ||
+    (l.email||"").toLowerCase().includes(q) ||
+    (qDigits && (l.phone||"").replace(/\D/g,"").includes(qDigits))
+  ); }
   const leads = sortLeads(filtered);
   return `
   <div class="panel">
-    <h2>Shared Lead Pool <span class="sub">${filter? `${leads.length} in ${filter} · of ${all.length} open` : `${all.length} open`} · anyone can call · a lead is only claimed when it's sold</span></h2>
+    <h2>Shared Lead Pool <span class="sub">${(filter||q)? `${leads.length} shown · of ${all.length} open` : `${all.length} open`} · anyone can call · a lead is only claimed when it's sold</span></h2>
     <div class="row" style="margin-bottom:12px">
-      <label class="muted" style="font-weight:700;text-transform:uppercase;letter-spacing:.4px;font-size:11px">Filter by state</label>
+      <input id="poolSearch" value="${escapeHtml(S.poolSearch||'')}" oninput="setPoolSearch(this.value)" placeholder="🔍 Search name, phone, or email…"
+        style="flex:1;min-width:200px;padding:8px 10px;border:1px solid var(--rule);border-radius:8px;font-size:13px">
+      <label class="muted" style="font-weight:700;text-transform:uppercase;letter-spacing:.4px;font-size:11px">State</label>
       <select onchange="setPoolState(this.value)" style="padding:7px 9px;border:1px solid var(--rule);border-radius:8px;background:#fff;font-size:13px">
-        <option value="">All states (${all.length})</option>
+        <option value="">All (${all.length})</option>
         ${states.map(s=>`<option value="${s}" ${s===filter?'selected':''}>${s} (${all.filter(l=>l.state===s).length})</option>`).join("")}
       </select>
-      ${filter?`<button class="btn s sm" onclick="setPoolState('')">Clear filter</button>`:''}
+      ${(filter||q)?`<button class="btn s sm" onclick="clearPoolFilters()">Clear</button>`:''}
     </div>
     ${leads.length? `<table><thead><tr>
         <th style="cursor:pointer;user-select:none" onclick="setPoolSort('name')">Name${sortArrow('name')}</th>
@@ -523,7 +543,7 @@ function renderPool(){
           <button class="btn g sm" onclick="markCalled('${l.id}')">📞 Called</button>
           <button class="btn p sm" onclick="openClose('${l.id}')">Sold</button></td>
       </tr>`).join("")}
-    </tbody></table>` : `<div class="empty">${filter?`No open leads in ${filter}. <a href="#" onclick="setPoolState('');return false">Show all states</a>.`:`Pool is empty. Import leads on the Import tab, or wait for chargebacks to recycle in.`}</div>`}
+    </tbody></table>` : `<div class="empty">${(filter||q)?`No leads match. <a href="#" onclick="clearPoolFilters();return false">Clear search &amp; filters</a>.`:`Pool is empty. Import leads on the Import tab, or wait for chargebacks to recycle in.`}</div>`}
   </div>`;
 }
 
@@ -833,20 +853,26 @@ async function doImport(){
   const raw=document.getElementById("impBox").value.trim();
   const by=document.getElementById("impBy").value;
   if(!raw){ alert("Paste at least one lead."); return; }
-  let added=0, skipped=0;
+  let added=0, skipped=0, dupes=0;
+  const seenPh=new Set(), seenEm=new Set();
   raw.split(/\r?\n/).forEach(line=>{
     if(!line.trim()) return;
     const cells=line.split(/[,\t]/).map(s=>s.trim());   // commas or tabs
     if(isHeaderRow(cells)) return;                        // ignore a pasted header line
     const l=parseLeadCells(cells);
     if(!l.name){ skipped++; return; }                    // no detectable name → skip
+    const ph=String(l.phone||"").replace(/\D/g,""); const em=(l.email||"").toLowerCase();
+    if(isExistingLead(l) || (ph.length>=7 && seenPh.has(ph)) || (em && seenEm.has(em))){ dupes++; return; }
+    if(ph.length>=7) seenPh.add(ph); if(em) seenEm.add(em);
     S.leads.push({id:uid("ld"), name:l.name, phone:l.phone||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0), email:l.email||"", dob:l.dob||"", gender:l.gender||"",
       imported_by:by, import_batch:"import-"+today(), imported_at:today(), status:"available", current_owner:null,
       touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
     added++;
   });
   await saveLeads(); document.getElementById("impBox").value=""; render();
-  alert(added+" lead"+(added===1?"":"s")+" added to the pool."+(skipped?(" "+skipped+" line"+(skipped===1?"":"s")+" skipped — no name detected."):""));
+  alert(added+" lead"+(added===1?"":"s")+" added to the pool."
+    +(dupes?(" "+dupes+" duplicate"+(dupes===1?"":"s")+" skipped."):"")
+    +(skipped?(" "+skipped+" line"+(skipped===1?"":"s")+" skipped — no name."):""));
 }
 
 /* ---------- file import: CSV / Excel / PDF ---------- */
@@ -1021,6 +1047,8 @@ function renderImportPreview(fname){
   }
   const sample=pendingImport.slice(0,6);
   const noPhone=pendingImport.filter(l=>!l.phone).length;
+  const dupCount=pendingImport.filter(isExistingLead).length;
+  const newCount=pendingImport.length-dupCount;
   prev.innerHTML=`
     <div style="padding:12px;border:1px solid var(--rule);border-radius:10px;background:#fafbfa;margin-bottom:6px">
       <b>${pendingImport.length}</b> lead${pendingImport.length===1?'':'s'} detected in <b>${escapeHtml(fname||"file")}</b>. Fields were auto‑detected — check them, then add:
@@ -1028,21 +1056,32 @@ function renderImportPreview(fname){
       ${sample.map(l=>`<tr><td><b>${escapeHtml(l.name)}</b></td><td class="muted">${escapeHtml(l.phone)||'<span style="color:var(--red)">none</span>'}</td><td>${escapeHtml(l.state)||'—'}</td><td>${l.age||'—'}</td><td class="muted">${escapeHtml(l.email)||'—'}</td></tr>`).join("")}
       ${pendingImport.length>6?`<tr><td colspan="5" class="muted">…and ${pendingImport.length-6} more</td></tr>`:''}
       </tbody></table>
+      ${dupCount?`<div class="muted" style="font-size:11px;margin-bottom:4px;color:var(--gold)"><b>⚠ ${dupCount} duplicate${dupCount===1?'':'s'}</b> already in the system — ${dupCount===1?'it':'they'}'ll be skipped.</div>`:''}
       ${noPhone?`<div class="muted" style="font-size:11px;margin-bottom:6px">⚠ ${noPhone} lead${noPhone===1?'':'s'} had no detectable phone number.</div>`:''}
       <div class="row">
-        <button class="btn p sm" onclick="commitImport()">Add ${pendingImport.length} to pool</button>
+        <button class="btn p sm" onclick="commitImport()">Add ${newCount} to pool${dupCount?` (skip ${dupCount})`:''}</button>
         <button class="btn s sm" onclick="cancelImport()">Cancel</button>
       </div>
     </div>`;
 }
 function cancelImport(){ pendingImport=[]; const p=document.getElementById("impPreview"); if(p) p.innerHTML=""; }
+// Duplicate detection: same phone (>=7 digits) or same email as an existing lead.
+function leadPhoneDigits(l){ return String(l.phone||"").replace(/\D/g,""); }
+function isExistingLead(lead){
+  const ph=leadPhoneDigits(lead), em=(lead.email||"").toLowerCase();
+  return S.leads.some(l=> (ph && ph.length>=7 && leadPhoneDigits(l)===ph) || (em && (l.email||"").toLowerCase()===em) );
+}
 async function commitImport(){
   if(!pendingImport.length) return;
   const sel=document.getElementById("impBy");
   const by= sel? sel.value : meName();
-  let added=0;
+  let added=0, dupes=0;
+  const seenPh=new Set(), seenEm=new Set();
   pendingImport.forEach(l=>{
     if(!l.name) return;
+    const ph=String(l.phone||"").replace(/\D/g,""); const em=(l.email||"").toLowerCase();
+    if(isExistingLead(l) || (ph.length>=7 && seenPh.has(ph)) || (em && seenEm.has(em))){ dupes++; return; }
+    if(ph.length>=7) seenPh.add(ph); if(em) seenEm.add(em);
     S.leads.push({id:uid("ld"), name:l.name, phone:l.phone||"", email:l.email||"", dob:l.dob||"", gender:l.gender||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0),
       imported_by:by, import_batch:"file-"+today(), imported_at:today(), status:"available", current_owner:null,
       touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
@@ -1050,7 +1089,7 @@ async function commitImport(){
   });
   pendingImport=[];
   await saveLeads(); render();
-  alert(added+" lead"+(added===1?"":"s")+" imported and added to the pool.");
+  alert(added+" lead"+(added===1?"":"s")+" imported and added to the pool."+(dupes?(" "+dupes+" duplicate"+(dupes===1?"":"s")+" skipped."):""));
 }
 
 /* ---------- sorting (lead tables) ---------- */
@@ -1090,7 +1129,8 @@ function touchersCell(l){
   if(!t.length) return `<span class="muted">— not contacted</span><div class="muted" style="font-size:10px;margin-top:2px">${calls}</div>`;
   const pills=t.map(n=>`<span class="pill" style="margin:1px 3px 1px 0">${escapeHtml(n)}</span>`).join("");
   const last=l.last_called_by? ` · last: ${escapeHtml(l.last_called_by)}${l.last_called_date?' '+fmtDate(l.last_called_date):''}`:'';
-  return pills+`<div class="muted" style="font-size:10px;margin-top:2px">${calls}${last}</div>`;
+  const dispo=l.last_disposition? ` · <b style="color:var(--ink)">${escapeHtml(l.last_disposition)}</b>`:'';
+  return pills+`<div class="muted" style="font-size:10px;margin-top:2px">${calls}${last}${dispo}</div>`;
 }
 // Shared appointment / follow-up visibility — everyone sees when a lead is
 // booked and by whom.
@@ -1220,6 +1260,58 @@ function renderStaleAlerts(){
   html+=`</div>`;
   return html;
 }
+/* ---------- calendar view ---------- */
+function leadsForCalendar(){ return isOwner()? S.leads.filter(l=>l.followup_date) : myFollowups(); }
+function calNav(delta){
+  if(!S.calRef){ const d=new Date(); S.calRef={y:d.getFullYear(), m:d.getMonth()}; }
+  let m=S.calRef.m+delta, y=S.calRef.y;
+  while(m<0){ m+=12; y--; } while(m>11){ m-=12; y++; }
+  S.calRef={y,m}; render();
+}
+function calToday(){ const d=new Date(); S.calRef={y:d.getFullYear(), m:d.getMonth()}; render(); }
+function renderCalendar(){
+  if(!S.calRef){ const d=new Date(); S.calRef={y:d.getFullYear(), m:d.getMonth()}; }
+  const {y,m}=S.calRef;
+  const first=new Date(y,m,1), startDow=first.getDay(), daysInMonth=new Date(y,m+1,0).getDate();
+  const monthName=first.toLocaleDateString(undefined,{month:'long',year:'numeric'});
+  const t=today(), pad2=n=>String(n).padStart(2,"0");
+  const byDate={};
+  leadsForCalendar().forEach(l=>{ if(l.followup_date){ (byDate[l.followup_date]=byDate[l.followup_date]||[]).push(l); } });
+  const dow=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  let cells="";
+  for(let i=0;i<startDow;i++) cells+=`<div style="background:#f7f8f7;border-radius:8px;min-height:92px"></div>`;
+  for(let d=1; d<=daysInMonth; d++){
+    const ds=`${y}-${pad2(m+1)}-${pad2(d)}`;
+    const items=(byDate[ds]||[]).slice().sort((a,b)=>(a.followup_time||"").localeCompare(b.followup_time||""));
+    const isToday= ds===t;
+    const chips=items.slice(0,4).map(l=>{
+      const appt=l.followup_kind==='appointment', col=appt?'var(--blue)':'var(--accent)';
+      const label=(appt&&l.followup_time? l.followup_time+' ':'')+(l.name||'');
+      return `<div onclick="openLead('${l.id}')" title="${escapeHtml((l.name||'')+(l.followup_set_by?' · '+l.followup_set_by:''))}" style="cursor:pointer;font-size:10.5px;color:#fff;background:${col};border-radius:5px;padding:2px 5px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(label)}</div>`;
+    }).join("");
+    const more=items.length>4?`<div class="muted" style="font-size:10px;margin-top:2px">+${items.length-4} more</div>`:"";
+    cells+=`<div style="background:#fff;border:1px solid ${isToday?'var(--gold)':'var(--rule)'};border-radius:8px;min-height:92px;padding:5px">
+      <div style="font-size:11px;font-weight:700;color:${isToday?'var(--gold)':'var(--muted)'}">${d}</div>${chips}${more}</div>`;
+  }
+  const total=Object.values(byDate).reduce((s,a)=>s+a.length,0);
+  return `
+  <div class="panel">
+    <div class="row" style="justify-content:space-between;margin-bottom:12px">
+      <h2 style="margin:0">${monthName} <span class="sub">${total} scheduled${isOwner()?' · all agents':''}</span></h2>
+      <div class="row"><button class="btn s sm" onclick="calNav(-1)">◀ Prev</button><button class="btn s sm" onclick="calToday()">Today</button><button class="btn s sm" onclick="calNav(1)">Next ▶</button></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px">
+      ${dow.map(d=>`<div class="muted" style="text-align:center;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px">${d}</div>`).join("")}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">${cells}</div>
+    <div class="row muted" style="margin-top:12px;font-size:11px;gap:16px">
+      <span><span style="display:inline-block;width:10px;height:10px;background:var(--blue);border-radius:3px;vertical-align:middle"></span> Appointment</span>
+      <span><span style="display:inline-block;width:10px;height:10px;background:var(--accent);border-radius:3px;vertical-align:middle"></span> Follow-up / callback</span>
+      ${total===0?`<span>· nothing scheduled this month</span>`:''}
+    </div>
+  </div>`;
+}
+
 // Admin-only: agents who haven't uploaded leads in more than IMPORT_GAP_DAYS.
 function renderImportAlerts(){
   if(!isOwner()) return "";
@@ -1263,7 +1355,7 @@ function openLead(id){
   <div class="modal-bg" onclick="if(event.target===this)closeModal()">
    <div class="modal" style="max-width:560px">
      <h3>${escapeHtml(l.name)}</h3>
-     <div class="ms">${escapeHtml(l.phone||'—')}${l.email?' · ✉ '+escapeHtml(l.email):''} · ${escapeHtml(l.state||'')} · age ${l.age||'—'}${l.gender?' · '+escapeHtml(l.gender):''}${l.dob?' · DOB '+escapeHtml(l.dob):''} · <span class="tag t-${l.status}">${l.status}</span>${cbBadge(l)}</div>
+     <div class="ms">${escapeHtml(l.phone||'—')}${l.email?' · ✉ '+escapeHtml(l.email):''} · ${escapeHtml(l.state||'')} · age ${l.age||'—'}${l.gender?' · '+escapeHtml(l.gender):''}${l.dob?' · DOB '+escapeHtml(l.dob):''} · <span class="tag t-${l.status}">${l.status}</span>${cbBadge(l)}${l.dnc?' <span class="tag" style="background:var(--red)">⛔ DNC</span>':''}${l.last_disposition?' <span class="pill">'+escapeHtml(l.last_disposition)+'</span>':''}</div>
      <div style="margin:-6px 0 12px">
        ${l.chargebackClient?'<span class="muted" style="font-size:11px">Flagged as a former client who charged back.</span>':'<span class="muted" style="font-size:11px">Not flagged as a charged-back client.</span>'}
        ${canEdit?`<button class="btn s sm" style="margin-left:8px" onclick="toggleChargebackClient('${l.id}')">${l.chargebackClient?'Remove charge-back flag':'⚡ Mark charged-back client'}</button>`:''}
@@ -1295,12 +1387,20 @@ function openLead(id){
        ${l.followup_date?`<button class="btn d sm" onclick="setFollowup('${l.id}',0,true)">Clear</button>`:""}
      </div>
 
-     <div class="field"><label>Add a note / call comment</label>
-       <textarea id="noteBox" rows="2" placeholder="e.g. No answer, left VM — or — interested, wants spouse on next call"></textarea></div>
-     <div class="row" style="margin-bottom:15px">
-       <button class="btn p sm" onclick="logCall('${l.id}')">Log Call + Note</button>
+     <div class="grid2">
+       <div class="field"><label>Call outcome (disposition)</label>
+         <select id="dispo">
+           <option value="">— select outcome —</option>
+           ${DISPOSITIONS.map(d=>`<option>${d}</option>`).join("")}
+         </select></div>
+       <div class="field"><label>Note / comment (optional)</label>
+         <textarea id="noteBox" rows="2" placeholder="e.g. left VM — or — wants spouse on next call"></textarea></div>
+     </div>
+     <div class="row" style="margin-bottom:6px">
+       <button class="btn p sm" onclick="logCall('${l.id}')">Log Call</button>
        <button class="btn s sm" onclick="addNote('${l.id}')">Add Note Only</button>
      </div>
+     <div class="muted" style="font-size:10.5px;margin-bottom:15px">"Callback" auto‑schedules a follow‑up for tomorrow · "DNC" removes the lead from the pool.</div>
 
      <div class="field"><label>Call log &amp; notes</label></div>
      <div id="noteList" style="max-height:230px;overflow:auto">${renderNotes(l)}</div>
@@ -1366,9 +1466,19 @@ async function logCall(id){
   l.times_worked=(l.times_worked||0)+1; l.last_called_by=meName(); l.last_called_date=today();
   if(!l.touched_by) l.touched_by=[]; if(!l.touched_by.includes(meName())) l.touched_by.push(meName());
   const box=document.getElementById("noteBox"); const txt=(box.value||"").trim();
+  const dispoSel=document.getElementById("dispo"); const dispo=dispoSel?dispoSel.value:"";
+  if(dispo){
+    l.last_disposition=dispo;
+    if(dispo==="DNC") l.dnc=true;                                  // suppress from pool/pipeline
+    if(dispo==="Callback" && !l.followup_date){                    // queue a callback so it lands in Follow-ups/Calendar
+      l.followup_date=addDays(1); l.followup_time=""; l.followup_kind="followup"; l.followup_set_by=meName();
+    }
+  }
   if(!l.notes) l.notes=[];
-  l.notes.push({ts:new Date().toISOString(), agent:meName(), text:(txt?txt:"Called — no answer / no note")});
-  box.value=""; await saveLeads(); refreshNotes(id);
+  const text = (dispo? "["+dispo+"]" : "") + (txt? (dispo?" ":"")+txt : (dispo?"":"Called — no answer / no note"));
+  l.notes.push({ts:new Date().toISOString(), agent:meName(), text:text, disposition:dispo||""});
+  box.value=""; if(dispoSel) dispoSel.value="";
+  await saveLeads(); refreshNotes(id); render();
 }
 async function setFollowup(id,days,clear){
   const l=S.leads.find(x=>x.id===id); if(!l) return;
