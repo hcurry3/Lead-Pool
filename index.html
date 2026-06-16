@@ -103,6 +103,16 @@
   .lerr{color:var(--red);font-size:12.5px;min-height:18px;margin-bottom:6px}
   .loginhint{font-size:11.5px;color:var(--muted);margin-top:16px;text-align:center;line-height:1.6;background:#f4f6f5;border-radius:9px;padding:9px}
 </style>
+<!-- Parsers for file import: SheetJS (CSV/Excel) + PDF.js (PDF text). Loaded
+     from CDN; the app guards on these being present before using them. -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+  if (window.pdfjsLib) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  }
+</script>
 </head>
 <body>
 <div class="app" style="display:none">
@@ -212,7 +222,7 @@ const DB = {
   }
 };
 
-let S = { leads:[], deals:[], agents:[], me:null, session:null, view:"dash", boardMode:"agent", cpl:1 };
+let S = { leads:[], deals:[], agents:[], me:null, session:null, view:"dash", boardMode:"agent", cpl:1, poolSort:{key:"name",dir:"asc"} };
 
 /* ---------- seed ---------- */
 function seed(){
@@ -384,11 +394,14 @@ function renderDash(){
 
 /* ---------- LEAD POOL ---------- */
 function renderPool(){
-  const leads = dialable();
+  const leads = sortLeads(dialable());
   return `
   <div class="panel">
     <h2>Shared Lead Pool <span class="sub">${leads.length} available · closed & dead leads are hidden automatically</span></h2>
-    ${leads.length? `<table><thead><tr><th>Name</th><th>State</th><th>Age</th><th>Status</th><th>Worked</th><th>Imported by</th><th></th></tr></thead><tbody>
+    ${leads.length? `<table><thead><tr>
+        <th style="cursor:pointer;user-select:none" onclick="setPoolSort('name')">Name${sortArrow('name')}</th>
+        <th style="cursor:pointer;user-select:none" onclick="setPoolSort('state')">State${sortArrow('state')}</th>
+        <th>Age</th><th>Status</th><th>Worked</th><th>Imported by</th><th></th></tr></thead><tbody>
       ${leads.map(l=>`<tr>
         <td><a href="#" onclick="openLead('${l.id}');return false"><b>${l.name}</b></a><div class="muted">${l.phone}</div></td>
         <td>${l.state}</td><td>${l.age}</td>
@@ -529,12 +542,17 @@ function renderAdmin(){
   const closedDeals = activeDeals();
   return `
   <div class="panel">
-    <h2>Import Leads <span class="sub">paste one lead per line: Name, Phone, State, Age</span></h2>
-    <div class="field"><textarea id="impBox" rows="4" placeholder="Earl Jennings, (731) 555-0101, TN, 71&#10;Gloria Pace, (706) 555-0142, GA, 68"></textarea></div>
+    <h2>Import Leads <span class="sub">upload CSV, Excel, or PDF — or paste manually</span></h2>
+    <div class="field"><label>Upload a file (CSV, Excel .xlsx/.xls, or PDF)</label>
+      <input type="file" id="impFile" accept=".csv,.xlsx,.xls,.pdf" onchange="importFile(event)"></div>
+    <div class="muted" style="margin:-4px 0 10px">Tip: if the first row is a header (Name, Phone, State, Age) the columns can be in any order. Otherwise that column order is assumed. CSV &amp; Excel are most reliable; PDF is best‑effort text extraction.</div>
+    <div id="impPreview"></div>
+    <div class="field" style="margin-top:6px"><label>Or paste one lead per line — Name, Phone, State, Age</label>
+      <textarea id="impBox" rows="4" placeholder="Earl Jennings, (731) 555-0101, TN, 71&#10;Gloria Pace, (706) 555-0142, GA, 68"></textarea></div>
     <div class="row">
       <div class="field" style="margin:0"><label>Imported by</label>
         <select id="impBy">${S.agents.map(a=>`<option value="${a.name}">${a.name}</option>`).join("")}</select></div>
-      <button class="btn p" style="align-self:flex-end" onclick="doImport()">Add to Pool</button>
+      <button class="btn p" style="align-self:flex-end" onclick="doImport()">Add pasted to Pool</button>
     </div>
   </div>
 
@@ -661,6 +679,150 @@ async function doImport(){
   });
   await saveLeads(); document.getElementById("impBox").value=""; render();
   alert(added+" lead"+(added===1?"":"s")+" added to the pool.");
+}
+
+/* ---------- file import: CSV / Excel / PDF ---------- */
+let pendingImport = [];
+
+// Figure out which column is which from a header row. Returns -1 for any
+// field we can't find, in which case the caller falls back to fixed order.
+function mapColumns(headerRow){
+  const idx={name:-1,phone:-1,state:-1,age:-1};
+  (headerRow||[]).forEach((h,i)=>{
+    const k=String(h||"").toLowerCase().trim();
+    if(idx.name<0 && /(^name$|full ?name|lead ?name|client|contact|first)/.test(k)) idx.name=i;
+    else if(idx.phone<0 && /(phone|number|cell|mobile|^tel)/.test(k)) idx.phone=i;
+    else if(idx.state<0 && /(^state$|^st$|province|region)/.test(k)) idx.state=i;
+    else if(idx.age<0 && /(^age$|^age\b)/.test(k)) idx.age=i;
+  });
+  return idx;
+}
+// Turn an array-of-rows (each row an array of cells) into lead objects.
+function rowsToLeads(rows){
+  rows=(rows||[]).filter(r=>r && r.some(c=>String(c==null?"":c).trim()!==""));
+  if(!rows.length) return [];
+  let idx=mapColumns(rows[0]);
+  let dataRows;
+  if(idx.name>=0 || idx.phone>=0){ dataRows=rows.slice(1); }          // had a header
+  else { idx={name:0,phone:1,state:2,age:3}; dataRows=rows; }          // no header → fixed order
+  const leads=[];
+  dataRows.forEach(r=>{
+    const get=i=> (i>=0 && i<r.length) ? String(r[i]==null?"":r[i]).trim() : "";
+    const name=get(idx.name);
+    if(!name) return;
+    const ageRaw=get(idx.age); const ageM=ageRaw.match(/\d{1,3}/);
+    leads.push({ name, phone:get(idx.phone), state:get(idx.state).toUpperCase(), age: ageM?Number(ageM[0]):0 });
+  });
+  return leads;
+}
+async function parseSpreadsheet(file){
+  const buf=await file.arrayBuffer();
+  const wb=XLSX.read(buf,{type:"array"});
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  const rows=XLSX.utils.sheet_to_json(ws,{header:1,blankrows:false,defval:""});
+  return rowsToLeads(rows);
+}
+async function parsePdf(file){
+  const buf=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  const lines=[];
+  for(let p=1;p<=pdf.numPages;p++){
+    const page=await pdf.getPage(p);
+    const tc=await page.getTextContent();
+    const byY={};
+    tc.items.forEach(it=>{ const y=Math.round(it.transform[5]); (byY[y]=byY[y]||[]).push(it); });
+    Object.keys(byY).map(Number).sort((a,b)=>b-a).forEach(y=>{
+      const row=byY[y].sort((a,b)=>a.transform[4]-b.transform[4]).map(i=>i.str).join(" ").replace(/\s+/g," ").trim();
+      if(row) lines.push(row);
+    });
+  }
+  // split each visual line into cells on commas, pipes, tabs, or runs of 2+ spaces
+  const rows=lines.map(l=>l.split(/\s*[,|\t]\s*|\s{2,}/).map(s=>s.trim()).filter(s=>s!==""));
+  return rowsToLeads(rows);
+}
+async function importFile(e){
+  const file=e.target.files && e.target.files[0]; if(!file) return;
+  const nm=file.name.toLowerCase();
+  const prev=document.getElementById("impPreview");
+  if(prev) prev.innerHTML='<div class="muted" style="padding:6px 0">Reading <b>'+escapeHtml(file.name)+'</b>…</div>';
+  try{
+    let leads=[];
+    if(nm.endsWith(".pdf")){
+      if(typeof pdfjsLib==="undefined"){ if(prev) prev.textContent="PDF reader still loading — try again in a moment."; return; }
+      leads=await parsePdf(file);
+    } else if(nm.endsWith(".csv")||nm.endsWith(".xlsx")||nm.endsWith(".xls")){
+      if(typeof XLSX==="undefined"){ if(prev) prev.textContent="Spreadsheet reader still loading — try again in a moment."; return; }
+      leads=await parseSpreadsheet(file);
+    } else { if(prev) prev.innerHTML='<div style="color:var(--red)">Unsupported file. Use CSV, Excel (.xlsx/.xls), or PDF.</div>'; return; }
+    pendingImport=leads;
+    renderImportPreview(file.name);
+  }catch(err){
+    if(prev) prev.innerHTML='<div style="color:var(--red)">Could not read that file: '+escapeHtml(String(err&&err.message||err))+'</div>';
+  }
+  e.target.value=""; // let the same file be re-picked
+}
+function renderImportPreview(fname){
+  const prev=document.getElementById("impPreview"); if(!prev) return;
+  if(!pendingImport.length){
+    prev.innerHTML='<div style="color:var(--red);padding:6px 0">No leads found in '+escapeHtml(fname||"that file")+'. Make sure it has Name / Phone / State / Age columns.</div>';
+    return;
+  }
+  const sample=pendingImport.slice(0,5);
+  prev.innerHTML=`
+    <div style="padding:12px;border:1px solid var(--rule);border-radius:10px;background:#fafbfa;margin-bottom:6px">
+      <b>${pendingImport.length}</b> lead${pendingImport.length===1?'':'s'} found in <b>${escapeHtml(fname||"file")}</b> — preview:
+      <table style="margin:8px 0"><thead><tr><th>Name</th><th>Phone</th><th>State</th><th>Age</th></tr></thead><tbody>
+      ${sample.map(l=>`<tr><td><b>${escapeHtml(l.name)}</b></td><td class="muted">${escapeHtml(l.phone)||'—'}</td><td>${escapeHtml(l.state)||'—'}</td><td>${l.age||'—'}</td></tr>`).join("")}
+      ${pendingImport.length>5?`<tr><td colspan="4" class="muted">…and ${pendingImport.length-5} more</td></tr>`:''}
+      </tbody></table>
+      <div class="row">
+        <button class="btn p sm" onclick="commitImport()">Add ${pendingImport.length} to pool</button>
+        <button class="btn s sm" onclick="cancelImport()">Cancel</button>
+      </div>
+    </div>`;
+}
+function cancelImport(){ pendingImport=[]; const p=document.getElementById("impPreview"); if(p) p.innerHTML=""; }
+async function commitImport(){
+  if(!pendingImport.length) return;
+  const sel=document.getElementById("impBy");
+  const by= sel? sel.value : meName();
+  let added=0;
+  pendingImport.forEach(l=>{
+    if(!l.name) return;
+    S.leads.push({id:uid("ld"), name:l.name, phone:l.phone||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0),
+      imported_by:by, import_batch:"file-"+today(), status:"available", current_owner:null,
+      touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
+    added++;
+  });
+  pendingImport=[];
+  await saveLeads(); render();
+  alert(added+" lead"+(added===1?"":"s")+" imported and added to the pool.");
+}
+
+/* ---------- sorting (lead tables) ---------- */
+// compare helper used by the pool table; sorts by name or state, asc/desc.
+function sortLeads(leads){
+  const {key,dir}=S.poolSort||{key:"name",dir:"asc"};
+  const mul=dir==="desc"?-1:1;
+  return leads.slice().sort((a,b)=>{
+    const av=String(a[key]||"").toLowerCase(), bv=String(b[key]||"").toLowerCase();
+    if(av<bv) return -1*mul;
+    if(av>bv) return 1*mul;
+    // tie-breaker: name
+    const an=String(a.name||"").toLowerCase(), bn=String(b.name||"").toLowerCase();
+    return an<bn?-1:an>bn?1:0;
+  });
+}
+function setPoolSort(key){
+  if(!S.poolSort) S.poolSort={key:"name",dir:"asc"};
+  if(S.poolSort.key===key){ S.poolSort.dir = S.poolSort.dir==="asc"?"desc":"asc"; }
+  else { S.poolSort={key,dir:"asc"}; }
+  render();
+}
+function sortArrow(key){
+  const s=S.poolSort||{key:"name",dir:"asc"};
+  if(s.key!==key) return ' <span class="muted" style="font-weight:400">↕</span>';
+  return s.dir==="asc"? ' ▲':' ▼';
 }
 async function addAgent(){
   const name=document.getElementById("agName").value.trim();
