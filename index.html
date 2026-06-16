@@ -860,6 +860,14 @@ function looksLikeName(c){ const s=String(c==null?"":c).trim(); return s!=="" &&
 // recognizes both M/D/Y (e.g. 8/30/1973) and ISO Y-M-D (e.g. 1954-09-11)
 function isDobCell(c){ const s=String(c==null?"":c).trim(); return /^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(s) || /^\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}$/.test(s); }
 function genderOf(c){ const s=String(c==null?"":c).trim().toLowerCase(); if(/^(male|m)$/.test(s)) return "Male"; if(/^(female|f)$/.test(s)) return "Female"; if(/^(nonbinary|non-binary|nb|other)$/.test(s)) return "Other"; return ""; }
+// Spreadsheet readers turn date cells into Excel serial numbers (e.g. 19978);
+// convert those back to a real ISO date so DOB stores cleanly and age computes.
+function normalizeDob(v){
+  const s=String(v==null?"":v).trim();
+  if(!s) return "";
+  if(/^\d{4,5}$/.test(s)){ const n=+s; if(n>=1000 && n<=80000){ const d=new Date(Date.UTC(1899,11,30)+n*86400000); if(!isNaN(d.getTime())) return d.toISOString().slice(0,10); } }
+  return s;
+}
 function ageFromDob(dob){
   const s=String(dob||"").trim();
   let y,mo,d, m=s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);   // ISO: 1954-09-11
@@ -927,7 +935,7 @@ function leadFromHeader(cells, idx){
     const fn=get(idx.first), ln=get(idx.last);
     name=(fn===ln ? fn : (fn+" "+ln)).replace(/\s+/g," ").trim();   // dedupe when First==Last
   }
-  const dob=get(idx.dob);
+  const dob=normalizeDob(get(idx.dob));
   const ageM=get(idx.age).match(/\d{1,3}/);
   let age = ageM? Number(ageM[0]) : 0;
   if(!age && dob) age=ageFromDob(dob);
