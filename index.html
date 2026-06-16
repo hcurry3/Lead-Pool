@@ -203,7 +203,7 @@ window.storage = {
 const MONEY = n => "$"+(Number(n)||0).toLocaleString();
 const today = () => new Date().toISOString().slice(0,10);
 const uid = p => p+"_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-const CARRIERS = ["Americo (Eagle Premier)","Aetna/CVS (Accendo)","Prosperity (New Vista)","American-Amicable (Senior Choice)","Foresters (Plan Right)","Mutual of Omaha (Living Promise)"];
+const CARRIERS = ["Americo (Eagle Premier)","Aetna/CVS (Accendo)","Prosperity (New Vista)","American-Amicable (Senior Choice)","Foresters (Plan Right)","Mutual of Omaha (Living Promise)","Transamerica (Immediate Solution)"];
 const WEEK_GOAL = 5000;
 
 /* ---------- storage layer (shared across agents; in-memory fallback) ---------- */
