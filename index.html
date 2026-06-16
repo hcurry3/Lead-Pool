@@ -121,6 +121,7 @@
     <nav class="nav" id="nav">
       <button data-v="dash" class="on"><span class="ic">◧</span><span class="lbl">Dashboard</span></button>
       <button data-v="pool"><span class="ic">▦</span><span class="lbl">Lead Pool</span></button>
+      <button data-v="import"><span class="ic">⬆</span><span class="lbl">Import</span></button>
       <button data-v="mine"><span class="ic">◉</span><span class="lbl">My Pipeline</span></button>
       <button data-v="followups"><span class="ic">◷</span><span class="lbl">Follow-ups</span></button>
       <button data-v="board"><span class="ic">★</span><span class="lbl">Leaderboard</span></button>
@@ -371,13 +372,14 @@ function downlineAgents(){
 }
 
 /* ---------- render router ---------- */
-const TITLES = {dash:"Dashboard",pool:"Lead Pool",mine:"My Pipeline",followups:"Follow-ups",board:"Leaderboard",command:"Command Center",admin:"Admin"};
+const TITLES = {dash:"Dashboard",pool:"Lead Pool",import:"Import Leads",mine:"My Pipeline",followups:"Follow-ups",board:"Leaderboard",command:"Command Center",admin:"Admin"};
 function render(){
   document.getElementById("ptitle").textContent = TITLES[S.view];
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on", b.dataset.v===S.view));
   const v=document.getElementById("view");
   if(S.view==="dash") v.innerHTML=renderDash();
   else if(S.view==="pool") v.innerHTML=renderPool();
+  else if(S.view==="import") v.innerHTML=renderImport();
   else if(S.view==="mine") v.innerHTML=renderMine();
   else if(S.view==="followups") v.innerHTML=renderFollowups();
   else if(S.view==="board") v.innerHTML=renderBoard();
@@ -453,6 +455,33 @@ function renderPool(){
           <button class="btn p sm" onclick="openClose('${l.id}')">Sold</button></td>
       </tr>`).join("")}
     </tbody></table>` : `<div class="empty">Pool is empty. Import leads in Admin, or wait for chargebacks to recycle in.</div>`}
+  </div>`;
+}
+
+/* ---------- IMPORT (open to every agent) ---------- */
+function renderImport(){
+  return `
+  <div class="panel">
+    <h2>Import Leads <span class="sub">upload CSV, Excel, or PDF — or paste manually · anyone can add to the shared pool</span></h2>
+    <div class="field"><label>Upload a file (CSV, Excel .xlsx/.xls, or PDF)</label>
+      <input type="file" id="impFile" accept=".csv,.xlsx,.xls,.pdf" onchange="importFile(event)"></div>
+    <div class="muted" style="margin:-4px 0 10px">Tip: if the first row is a header (Name, Phone, State, Age, Email) the columns can be in any order. Otherwise that column order is assumed. CSV &amp; Excel are most reliable; PDF is best‑effort text extraction.</div>
+    <div id="impPreview"></div>
+    <div class="field" style="margin-top:6px"><label>Or paste one lead per line — Name, Phone, State, Age, Email (email optional)</label>
+      <textarea id="impBox" rows="4" placeholder="Earl Jennings, (731) 555-0101, TN, 71, earl@email.com&#10;Gloria Pace, (706) 555-0142, GA, 68"></textarea></div>
+    <div class="row">
+      <div class="field" style="margin:0"><label>Imported by</label>
+        <select id="impBy">${S.agents.map(a=>`<option value="${a.name}" ${a.name===meName()?'selected':''}>${a.name}</option>`).join("")}</select></div>
+      <button class="btn p" style="align-self:flex-end" onclick="doImport()">Add pasted to Pool</button>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>How importing works</h2>
+    <div class="muted" style="line-height:1.7">
+      Leads you add go straight into the <b>shared Lead Pool</b> for the whole team to call.
+      You're recorded as the <b>importer</b>, which lets you (and admins) edit that lead's name, phone &amp; email later.
+      If a lead is a former client who charged back, open the lead and use the <b>⚡ Mark charged‑back client</b> flag.
+    </div>
   </div>`;
 }
 
@@ -588,18 +617,8 @@ function renderAdmin(){
   const closedDeals = activeDeals();
   return `
   <div class="panel">
-    <h2>Import Leads <span class="sub">upload CSV, Excel, or PDF — or paste manually</span></h2>
-    <div class="field"><label>Upload a file (CSV, Excel .xlsx/.xls, or PDF)</label>
-      <input type="file" id="impFile" accept=".csv,.xlsx,.xls,.pdf" onchange="importFile(event)"></div>
-    <div class="muted" style="margin:-4px 0 10px">Tip: if the first row is a header (Name, Phone, State, Age) the columns can be in any order. Otherwise that column order is assumed. CSV &amp; Excel are most reliable; PDF is best‑effort text extraction.</div>
-    <div id="impPreview"></div>
-    <div class="field" style="margin-top:6px"><label>Or paste one lead per line — Name, Phone, State, Age, Email (email optional)</label>
-      <textarea id="impBox" rows="4" placeholder="Earl Jennings, (731) 555-0101, TN, 71, earl@email.com&#10;Gloria Pace, (706) 555-0142, GA, 68"></textarea></div>
-    <div class="row">
-      <div class="field" style="margin:0"><label>Imported by</label>
-        <select id="impBy">${S.agents.map(a=>`<option value="${a.name}">${a.name}</option>`).join("")}</select></div>
-      <button class="btn p" style="align-self:flex-end" onclick="doImport()">Add pasted to Pool</button>
-    </div>
+    <h2>Import Leads <span class="sub">now open to all agents</span></h2>
+    <div class="muted">Lead importing has moved to the <a href="#" onclick="go('import');return false"><b>Import</b></a> tab and is available to everyone with a login.</div>
   </div>
 
   <div class="panel">
