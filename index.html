@@ -153,6 +153,7 @@
     <div class="field"><label>Password</label><input id="lpass" type="password" autocomplete="current-password" placeholder="password"></div>
     <div id="lerr" class="lerr"></div>
     <button class="btn p" style="width:100%;padding:12px;font-size:15px" id="loginBtn">Log In</button>
+    <button class="btn s" style="width:100%;padding:10px;margin-top:8px" id="signupBtn">Request an agent account</button>
     <div class="loginhint" id="loginhint"></div>
   </div>
 </div>
@@ -228,11 +229,11 @@ let S = { leads:[], deals:[], agents:[], me:null, session:null, view:"dash", boa
 /* ---------- seed ---------- */
 function seed(){
   S.agents = [
-    {id:"ag_owner",  name:"You (Owner)", team:"HQ", upline:"—", username:"owner", pw:hashPw("demo123"), role:"owner"},
-    {id:"ag_marcus", name:"Marcus Reed", team:"Alpha", upline:"Owner", username:"marcus", pw:hashPw("demo123"), role:"agent"},
-    {id:"ag_jas",    name:"Jasmine Cole", team:"Alpha", upline:"Marcus Reed", username:"jasmine", pw:hashPw("demo123"), role:"agent"},
-    {id:"ag_derek",  name:"Derek Hall", team:"Bravo", upline:"Owner", username:"derek", pw:hashPw("demo123"), role:"agent"},
-    {id:"ag_tanya",  name:"Tanya Brooks", team:"Bravo", upline:"Derek Hall", username:"tanya", pw:hashPw("demo123"), role:"agent"},
+    {id:"ag_owner",  name:"You (Owner)", team:"HQ", upline:"—", username:"owner", pw:hashPw("demo123"), role:"owner", status:"active"},
+    {id:"ag_marcus", name:"Marcus Reed", team:"Alpha", upline:"Owner", username:"marcus", pw:hashPw("demo123"), role:"agent", status:"active"},
+    {id:"ag_jas",    name:"Jasmine Cole", team:"Alpha", upline:"Marcus Reed", username:"jasmine", pw:hashPw("demo123"), role:"agent", status:"active"},
+    {id:"ag_derek",  name:"Derek Hall", team:"Bravo", upline:"Owner", username:"derek", pw:hashPw("demo123"), role:"agent", status:"active"},
+    {id:"ag_tanya",  name:"Tanya Brooks", team:"Bravo", upline:"Derek Hall", username:"tanya", pw:hashPw("demo123"), role:"agent", status:"active"},
   ];
   const names=[["Earl Jennings","TN",71],["Gloria Pace","GA",68],["Roy Mercer","OH",77],["Betty Snyder","NC",74],
     ["Wendell Cruz","TX",66],["Mae Holloway","AL",80],["Curtis Dale","SC",69],["Irene Boyd","KY",73],
@@ -293,11 +294,50 @@ function showLogin(){
   setTimeout(()=>{const u=document.getElementById("luser"); if(u) u.focus();},60);
 }
 async function doLogin(){
+  document.getElementById("lerr").style.color=""; // reset (signup uses green)
   const u=document.getElementById("luser").value.trim().toLowerCase();
   const p=document.getElementById("lpass").value;
   const a=S.agents.find(x=>(x.username||"").toLowerCase()===u);
   if(!a || a.pw!==hashPw(p)){ document.getElementById("lerr").textContent="Invalid username or password."; return; }
+  if(!(a.role==="owner" || !a.status || a.status==="active")){
+    document.getElementById("lerr").textContent = a.status==="rejected"
+      ? "Your access request was declined. Contact your admin."
+      : "Your account is awaiting admin approval.";
+    return;
+  }
   S.session=a.id; S.me=a.id; await saveSession(); showApp();
+}
+// Self-signup → creates a PENDING agent the admin must approve.
+function openSignup(){
+  document.getElementById("modalRoot").innerHTML=`
+  <div class="modal-bg" onclick="if(event.target===this)closeSignup()">
+   <div class="modal" style="max-width:420px">
+     <h3>Request an Agent Account</h3>
+     <div class="ms">Your request is sent to an admin for approval. You'll be able to log in once it's approved.</div>
+     <div class="field"><label>Full name</label><input id="su_name" placeholder="Jane Agent"></div>
+     <div class="field"><label>Team (optional)</label><input id="su_team" placeholder="Alpha / Bravo…"></div>
+     <div class="field"><label>Username</label><input id="su_user" placeholder="jane"></div>
+     <div class="field"><label>Password</label><input id="su_pass" type="password" placeholder="at least 4 characters"></div>
+     <div id="su_err" class="lerr"></div>
+     <div class="mfoot"><button class="btn s" onclick="closeSignup()">Cancel</button><button class="btn p" onclick="doSignup()">Submit request</button></div>
+   </div>
+  </div>`;
+}
+function closeSignup(){ document.getElementById("modalRoot").innerHTML=""; }
+async function doSignup(){
+  const name=(document.getElementById("su_name").value||"").trim();
+  const team=(document.getElementById("su_team").value||"").trim()||"Unassigned";
+  const user=(document.getElementById("su_user").value||"").trim().toLowerCase();
+  const pass=document.getElementById("su_pass").value;
+  const err=document.getElementById("su_err");
+  if(!name||!user||!pass){ err.textContent="Enter your name, a username, and a password."; return; }
+  if(pass.length<4){ err.textContent="Password must be at least 4 characters."; return; }
+  if(S.agents.some(x=>(x.username||"").toLowerCase()===user)){ err.textContent="That username is taken — pick another."; return; }
+  S.agents.push({id:uid("ag"), name, team, upline:"Owner", username:user, pw:hashPw(pass), role:"agent", status:"pending"});
+  await saveAgents();
+  closeSignup();
+  document.getElementById("lerr").style.color="var(--accent)";
+  document.getElementById("lerr").textContent="Request submitted! An admin will review your account.";
 }
 async function doLogout(){ S.session=null; S.me=null; await saveSession(); showLogin(); }
 function openPw(){
@@ -650,10 +690,28 @@ function renderAdmin(){
     <div class="muted">Lead importing has moved to the <a href="#" onclick="go('import');return false"><b>Import</b></a> tab and is available to everyone with a login.</div>
   </div>
 
+  <div class="panel" ${S.agents.some(a=>a.status==="pending")?'style="border-left:3px solid var(--gold)"':''}>
+    <h2>Pending Access Requests <span class="sub">${S.agents.filter(a=>a.status==="pending").length} awaiting approval</span></h2>
+    ${S.agents.filter(a=>a.status==="pending").length? `<table><thead><tr><th>Name</th><th>Username</th><th>Team</th><th></th></tr></thead><tbody>
+      ${S.agents.filter(a=>a.status==="pending").map(a=>`<tr>
+        <td><b>${escapeHtml(a.name)}</b></td>
+        <td><span class="pill" style="font-family:monospace">${escapeHtml(a.username||'')}</span></td>
+        <td><span class="pill">${escapeHtml(a.team||'—')}</span></td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn p sm" onclick="setAgentStatus('${a.id}','active')">Approve</button>
+          <button class="btn d sm" onclick="setAgentStatus('${a.id}','rejected')">Decline</button></td>
+      </tr>`).join("")}
+    </tbody></table>` : `<div class="empty">No pending requests.</div>`}
+  </div>
+
   <div class="panel">
     <h2>Agents &amp; Logins <span class="sub">each agent gets a unique username</span></h2>
-    <table><thead><tr><th>Agent</th><th>Username</th><th>Team</th><th>Upline</th></tr></thead><tbody>
-      ${S.agents.map(a=>`<tr><td><b>${a.name}</b></td><td><span class="pill" style="font-family:monospace">${a.username||'—'}</span></td><td><span class="pill">${a.team}</span></td><td class="muted">${a.upline}</td></tr>`).join("")}
+    <table><thead><tr><th>Agent</th><th>Username</th><th>Team</th><th>Upline</th><th>Status</th><th></th></tr></thead><tbody>
+      ${S.agents.map(a=>{const st=a.role==="owner"?"owner":(a.status||"active");
+        const stColor= st==="pending"?"var(--gold)":st==="rejected"?"var(--red)":(st==="owner"?"var(--ink)":"var(--accent)");
+        return `<tr><td><b>${escapeHtml(a.name)}</b></td><td><span class="pill" style="font-family:monospace">${escapeHtml(a.username||'—')}</span></td><td><span class="pill">${escapeHtml(a.team||'')}</span></td><td class="muted">${escapeHtml(a.upline||'')}</td>
+        <td><span class="tag" style="background:${stColor}">${st}</span></td>
+        <td style="text-align:right;white-space:nowrap">${a.role==="owner"?'':`${a.status==="rejected"?`<button class="btn s sm" onclick="setAgentStatus('${a.id}','active')">Reinstate</button> `:''}<button class="btn d sm" onclick="removeAgent('${a.id}')">Remove</button>`}</td></tr>`;}).join("")}
     </tbody></table>
     <div class="grid2" style="margin-top:12px">
       <div class="field"><label>Full name</label><input id="agName" placeholder="New agent name"></div>
@@ -1030,9 +1088,21 @@ async function addAgent(){
   const pass=document.getElementById("agPass").value;
   if(!name||!user||!pass){ alert("Enter a name, username, and password."); return; }
   if(S.agents.some(a=>(a.username||"").toLowerCase()===user)){ alert("That username is taken — pick another."); return; }
-  S.agents.push({id:uid("ag"), name, team, upline:up, username:user, pw:hashPw(pass), role:"agent"});
+  S.agents.push({id:uid("ag"), name, team, upline:up, username:user, pw:hashPw(pass), role:"agent", status:"active"});
   await saveAgents(); render();
   alert("Agent created. They can log in with username \""+user+"\".");
+}
+// Admin: approve / decline / reinstate / remove agent accounts.
+async function setAgentStatus(id, status){
+  if(!isOwner()){ alert("Admins only."); return; }
+  const a=agentById(id); if(!a) return;
+  a.status=status; await saveAgents(); render();
+}
+async function removeAgent(id){
+  if(!isOwner()){ alert("Admins only."); return; }
+  const a=agentById(id); if(!a || a.role==="owner") return;
+  if(!confirm("Remove "+a.name+"? Their login is deleted.")) return;
+  S.agents=S.agents.filter(x=>x.id!==id); await saveAgents(); render();
 }
 async function reseed(){ if(!confirm("Reset to demo data? This replaces current data.")) return; seed(); await saveLeads(); await saveDeals(); await saveAgents(); S.session=S.agents[0].id; S.me=S.session; await saveSession(); fillMe(); render(); }
 async function wipe(){ if(!confirm("Clear ALL leads, deals, and agents?")) return; S.leads=[];S.deals=[];S.agents=[]; await saveLeads();await saveDeals();await saveAgents(); seed(); await saveLeads();await saveDeals();await saveAgents(); S.session=S.agents[0].id; S.me=S.session; await saveSession(); fillMe(); render(); }
@@ -1285,6 +1355,7 @@ async function init(){
   document.getElementById("logoutBtn").addEventListener("click",doLogout);
   document.getElementById("pwBtn").addEventListener("click",openPw);
   document.getElementById("loginBtn").addEventListener("click",doLogin);
+  document.getElementById("signupBtn").addEventListener("click",openSignup);
   document.getElementById("lpass").addEventListener("keydown",e=>{ if(e.key==="Enter") doLogin(); });
   document.getElementById("luser").addEventListener("keydown",e=>{ if(e.key==="Enter") document.getElementById("lpass").focus(); });
   document.getElementById("loginhint").innerHTML='Demo logins — <b>owner</b>, <b>marcus</b>, <b>jasmine</b>, <b>derek</b>, <b>tanya</b> · password <b>demo123</b>';
