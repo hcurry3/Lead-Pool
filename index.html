@@ -233,6 +233,7 @@ async function loadAll(){
     SB.from("leads").select("*"),
     SB.from("deals").select("*")
   ]);
+  if(pr.error) throw pr.error;   // can't function without profiles
   S.agents = (pr.data||[]).map(profileFromRow);
   S.leads  = (lr.data||[]).map(leadFromRow);
   S.deals  = (dr.data||[]).map(dealFromRow);
@@ -252,7 +253,14 @@ function showLogin(){
 // After a valid Supabase session: load data, then enforce approved status.
 async function afterLogin(session){
   S.session=session; S.me=session.user.id;
-  await loadAll();
+  try { await loadAll(); }
+  catch(e){
+    console.error("loadAll failed", e);
+    try{ await SB.auth.signOut(); }catch(_){}
+    S.me=null; S.session=null; showLogin();
+    const el=document.getElementById("lerr"); if(el){ el.style.color="var(--red)"; el.textContent="Couldn't reach the server — check your connection and try again."; }
+    return;
+  }
   const me=agentById(S.me);
   if(!me || (me.role!=="owner" && me.status!=="active")){
     await SB.auth.signOut(); S.me=null; S.session=null;
@@ -1478,21 +1486,34 @@ const PWEYE = id => `<span onclick="togglePw('${id}',this)" style="float:right;c
 
 /* ---------- init ---------- */
 async function init(){
-  document.getElementById("nav").addEventListener("click",e=>{const b=e.target.closest("button");if(b){go(b.dataset.v);}});
-  document.getElementById("refreshBtn").addEventListener("click",async()=>{await loadAll(); render();});
-  document.getElementById("logoutBtn").addEventListener("click",doLogout);
-  document.getElementById("pwBtn").addEventListener("click",openPw);
-  document.getElementById("loginBtn").addEventListener("click",doLogin);
-  document.getElementById("signupBtn").addEventListener("click",openSignup);
-  document.getElementById("lpass").addEventListener("keydown",e=>{ if(e.key==="Enter") doLogin(); });
-  document.getElementById("luser").addEventListener("keydown",e=>{ if(e.key==="Enter") document.getElementById("lpass").focus(); });
-  document.getElementById("loginhint").innerHTML='New here? Click <b>Request an agent account</b> — an admin approves you, then you can log in.';
-  // restore an existing Supabase session if present
-  const { data:{ session } } = await SB.auth.getSession();
-  if(session){ await afterLogin(session); }
-  else { showLogin(); }
+  // Wiring is wrapped so a single failure can never leave a blank screen.
+  try{
+    document.getElementById("nav").addEventListener("click",e=>{const b=e.target.closest("button");if(b){go(b.dataset.v);}});
+    document.getElementById("refreshBtn").addEventListener("click",async()=>{ try{ await loadAll(); render(); }catch(e){ alert("Couldn't refresh — check your connection."); } });
+    document.getElementById("logoutBtn").addEventListener("click",doLogout);
+    document.getElementById("pwBtn").addEventListener("click",openPw);
+    document.getElementById("loginBtn").addEventListener("click",doLogin);
+    document.getElementById("signupBtn").addEventListener("click",openSignup);
+    document.getElementById("lpass").addEventListener("keydown",e=>{ if(e.key==="Enter") doLogin(); });
+    document.getElementById("luser").addEventListener("keydown",e=>{ if(e.key==="Enter") document.getElementById("lpass").focus(); });
+    document.getElementById("loginhint").innerHTML='New here? Click <b>Request an agent account</b> — an admin approves you, then you can log in.';
+  }catch(e){ console.error("init wiring failed", e); }
+  // restore an existing Supabase session if present — but never block the login screen
+  try{
+    const { data:{ session } } = await SB.auth.getSession();
+    if(session){ await afterLogin(session); }
+    else { showLogin(); }
+  }catch(e){
+    console.error("startup failed", e);
+    try{ showLogin(); const el=document.getElementById("lerr"); if(el){ el.style.color="var(--red)"; el.textContent="Couldn't reach the server — refresh to try again."; } }catch(_){}
+  }
 }
-init();
+// If the Supabase library failed to load, show a clear message instead of a blank page.
+if(!window.supabase){
+  try{ document.getElementById("login").style.display="flex"; var le=document.getElementById("lerr"); if(le){ le.style.color="var(--red)"; le.textContent="Couldn't load a required library. Check your connection / ad-blocker and refresh."; } }catch(_){}
+} else {
+  init();
+}
 </script>
 </body>
 </html>
