@@ -236,20 +236,23 @@ function seed(){
   const names=[["Earl Jennings","TN",71],["Gloria Pace","GA",68],["Roy Mercer","OH",77],["Betty Snyder","NC",74],
     ["Wendell Cruz","TX",66],["Mae Holloway","AL",80],["Curtis Dale","SC",69],["Irene Boyd","KY",73],
     ["Hank Mosley","MO",75],["Lucille Ray","FL",70],["Sam Pruitt","TN",64],["Edna Cole","VA",79]];
-  const st=["available","available","available","available","available","working","closed","dead","available","reopened","available","available"];
+  // Leads stay in the shared pool until SOLD. "contacted" leads are still
+  // available to everyone — the touched_by list just shows who has connected.
+  const st=["available","available","available","available","available","available","closed","dead","available","reopened","available","available"];
   S.leads = names.map((n,i)=>({
     id:uid("ld"), name:n[0], phone:"("+(200+i)+") 555-"+(1000+i), state:n[1], age:n[2],
     imported_by: i%2? "Marcus Reed":"Derek Hall", import_batch:"aged-fex-"+today(),
-    status: st[i]||"available", current_owner: st[i]==="working"?"ag_jas":null,
-    touched_by: st[i]==="closed"?["Marcus Reed"]: (st[i]==="working"?["Jasmine Cole"]:[]),
-    times_worked: st[i]==="dead"?6:(st[i]==="closed"?2:(st[i]==="working"?1:0)),
-    last_called_by:null, last_called_date:null
+    status: st[i]||"available", current_owner: st[i]==="closed"?"ag_marcus":null,
+    touched_by: st[i]==="closed"?["Marcus Reed"]:[],
+    times_worked: st[i]==="dead"?6:(st[i]==="closed"?2:0),
+    last_called_by: st[i]==="closed"?"Marcus Reed":null, last_called_date: st[i]==="closed"?today():null
   }));
-  // seed a couple closed deals for the leaderboard
-  // sample notes + a scheduled appointment / follow-up so the feature shows on first load
-  const wk = S.leads.find(l=>l.status==="working");
-  if(wk){ wk.followup_date=addDays(1); wk.followup_time="2:00 PM"; wk.followup_kind="appointment"; wk.followup_set_by="Jasmine Cole";
-    wk.notes=[{ts:new Date(Date.now()-86400000).toISOString(),agent:"Jasmine Cole",text:"Reached him — interested but wants his wife on the call. Booked the appointment for tomorrow."}]; }
+  // sample contact history + a scheduled appointment so the feature shows on first load.
+  // Mae stays in the pool (available) but is visibly "connected" by Jasmine.
+  const wk = S.leads.find(l=>l.name==="Mae Holloway");
+  if(wk){ wk.touched_by=["Jasmine Cole"]; wk.times_worked=1; wk.last_called_by="Jasmine Cole"; wk.last_called_date=today();
+    wk.followup_date=addDays(1); wk.followup_time="2:00 PM"; wk.followup_kind="appointment"; wk.followup_set_by="Jasmine Cole";
+    wk.notes=[{ts:new Date(Date.now()-86400000).toISOString(),agent:"Jasmine Cole",text:"Reached her — interested but wants her husband on the call. Booked the appointment for tomorrow."}]; }
   const rp = S.leads.find(l=>l.status==="reopened");
   if(rp){ rp.followup_date=today(); rp.followup_kind="followup"; rp.followup_set_by="Marcus Reed";
     rp.notes=[{ts:new Date(Date.now()-3600000).toISOString(),agent:"Marcus Reed",text:"Chargeback — card declined. Recycled back to pool, needs a re-close."}]; }
@@ -332,7 +335,9 @@ function withinDays(dateStr, days){
   return (now - d)/(1000*60*60*24) <= days;
 }
 function dialable(){ return S.leads.filter(l=>l.status==="available"||l.status==="reopened"); }
-function myWorking(){ return S.leads.filter(l=>l.current_owner===S.me && l.status==="working"); }
+// "My Pipeline" = open leads I've personally made contact with (called),
+// not sold or dead. Leads are never locked to me until I sell them.
+function myWorking(){ return S.leads.filter(l=> (l.touched_by||[]).includes(meName()) && l.status!=="closed" && l.status!=="dead"); }
 function activeDeals(){ return S.deals.filter(d=>d.status==="active"); }
 
 /* ---------- render router ---------- */
@@ -397,19 +402,21 @@ function renderPool(){
   const leads = sortLeads(dialable());
   return `
   <div class="panel">
-    <h2>Shared Lead Pool <span class="sub">${leads.length} available · closed & dead leads are hidden automatically</span></h2>
+    <h2>Shared Lead Pool <span class="sub">${leads.length} open · anyone can call · a lead is only claimed when it's sold</span></h2>
     ${leads.length? `<table><thead><tr>
         <th style="cursor:pointer;user-select:none" onclick="setPoolSort('name')">Name${sortArrow('name')}</th>
         <th style="cursor:pointer;user-select:none" onclick="setPoolSort('state')">State${sortArrow('state')}</th>
-        <th>Age</th><th>Status</th><th>Worked</th><th>Imported by</th><th></th></tr></thead><tbody>
+        <th>Age</th><th>Status</th><th>Connected by</th><th>Calls</th><th></th></tr></thead><tbody>
       ${leads.map(l=>`<tr>
         <td><a href="#" onclick="openLead('${l.id}');return false"><b>${l.name}</b></a><div class="muted">${l.phone}</div></td>
         <td>${l.state}</td><td>${l.age}</td>
         <td><span class="tag t-${l.status}">${l.status}</span></td>
+        <td>${touchersCell(l)}</td>
         <td>${l.times_worked}×</td>
-        <td class="muted">${l.imported_by||'—'}</td>
-        <td style="text-align:right;white-space:nowrap"><button class="btn s sm" onclick="openLead('${l.id}')">Notes</button>
-          <button class="btn p sm" onclick="claim('${l.id}')">Claim</button></td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn s sm" onclick="openLead('${l.id}')">Notes</button>
+          <button class="btn g sm" onclick="markCalled('${l.id}')">📞 Called</button>
+          <button class="btn p sm" onclick="openClose('${l.id}')">Sold</button></td>
       </tr>`).join("")}
     </tbody></table>` : `<div class="empty">Pool is empty. Import leads in Admin, or wait for chargebacks to recycle in.</div>`}
   </div>`;
@@ -417,24 +424,27 @@ function renderPool(){
 
 /* ---------- MY PIPELINE ---------- */
 function renderMine(){
-  const leads = myWorking();
+  const leads = sortLeads(myWorking());
   return `
   <div class="panel">
-    <h2>My Pipeline <span class="sub">click a lead to log a call, take notes, or set a follow-up</span></h2>
-    ${leads.length? `<table><thead><tr><th>Name</th><th>State</th><th>Worked</th><th>Follow-up</th><th></th></tr></thead><tbody>
+    <h2>My Pipeline <span class="sub">leads you've made contact with — log a call, take notes, set a follow-up, or mark sold</span></h2>
+    ${leads.length? `<table><thead><tr>
+        <th style="cursor:pointer;user-select:none" onclick="setPoolSort('name')">Name${sortArrow('name')}</th>
+        <th style="cursor:pointer;user-select:none" onclick="setPoolSort('state')">State${sortArrow('state')}</th>
+        <th>Calls</th><th>Follow-up</th><th></th></tr></thead><tbody>
       ${leads.map(l=>{
         const fu= l.followup_date? (schedBadge(l)+`<div class="muted" style="font-size:10px">${l.followup_kind==='appointment'?'Appt':'Follow-up'} · ${l.followup_set_by||''}</div>`) : `<span class="muted">—</span>`;
         return `<tr>
         <td><a href="#" onclick="openLead('${l.id}');return false"><b>${l.name}</b></a><div class="muted">${l.phone}</div></td>
         <td>${l.state}</td><td>${l.times_worked}×</td><td>${fu}</td>
         <td style="text-align:right;white-space:nowrap">
-          <button class="btn p sm" onclick="openLead('${l.id}')">Open</button>
-          <button class="btn s sm" onclick="openClose('${l.id}')">Close</button>
-          <button class="btn s sm" onclick="release('${l.id}')">Release</button>
+          <button class="btn s sm" onclick="openLead('${l.id}')">Open</button>
+          <button class="btn g sm" onclick="markCalled('${l.id}')">📞 Called</button>
+          <button class="btn p sm" onclick="openClose('${l.id}')">Sold</button>
           <button class="btn d sm" onclick="markDead('${l.id}')">Dead</button>
         </td>
       </tr>`;}).join("")}
-    </tbody></table>` : `<div class="empty">Nothing in your pipeline yet. Head to the <a href="#" onclick="go('pool');return false">Lead Pool</a> and claim some leads.</div>`}
+    </tbody></table>` : `<div class="empty">Nothing here yet. Head to the <a href="#" onclick="go('pool');return false">Lead Pool</a> and start calling leads.</div>`}
   </div>`;
 }
 
@@ -600,16 +610,19 @@ function renderAdmin(){
 }
 
 /* ---------- actions ---------- */
-async function claim(id){
+// Log that the current agent called/made contact with this lead. The lead
+// STAYS in the shared pool — calling never claims it. Everyone can see who
+// has connected (touched_by) and who called last.
+async function markCalled(id){
   const l=S.leads.find(x=>x.id===id); if(!l) return;
-  l.status="working"; l.current_owner=S.me; l.times_worked++;
+  l.times_worked=(l.times_worked||0)+1;
   l.last_called_by=meName(); l.last_called_date=today();
   if(!l.touched_by) l.touched_by=[];
   if(!l.touched_by.includes(meName())) l.touched_by.push(meName());
+  if(!l.notes) l.notes=[];
+  l.notes.push({ts:new Date().toISOString(), agent:meName(), text:"📞 Logged a call"});
   await saveLeads(); render();
 }
-async function redial(id){ const l=S.leads.find(x=>x.id===id); if(l){ l.times_worked++; l.last_called_date=today(); await saveLeads(); render(); } }
-async function release(id){ const l=S.leads.find(x=>x.id===id); if(l){ l.status="available"; l.current_owner=null; await saveLeads(); render(); } }
 async function markDead(id){ const l=S.leads.find(x=>x.id===id); if(l){ l.status="dead"; l.current_owner=null; await saveLeads(); render(); } }
 
 function openClose(id){
@@ -618,8 +631,8 @@ function openClose(id){
   document.getElementById("modalRoot").innerHTML=`
   <div class="modal-bg" onclick="if(event.target===this)closeModal()">
    <div class="modal">
-     <h3>Close — ${l.name}</h3>
-     <div class="ms">Closing as <b>${m.name}</b> · Team ${m.team}. This locks the lead out of the pool.</div>
+     <h3>Mark Sold — ${l.name}</h3>
+     <div class="ms">Recording the sale as <b>${m.name}</b> · Team ${m.team}. This <b>claims</b> the lead and removes it from the shared pool.</div>
      <div class="grid2">
        <div class="field"><label>Carrier</label><select id="cf_carrier">${CARRIERS.map(c=>`<option>${c}</option>`).join("")}</select></div>
        <div class="field"><label>Annual AP ($)</label><input id="cf_ap" type="number" placeholder="1140"></div>
@@ -631,7 +644,7 @@ function openClose(id){
      </div>
      <div class="mfoot">
        <button class="btn s" onclick="closeModal()">Cancel</button>
-       <button class="btn p" onclick="confirmClose('${l.id}')">Mark Closed &amp; Paid</button>
+       <button class="btn p" onclick="confirmClose('${l.id}')">Record Sale &amp; Claim Lead</button>
      </div>
    </div>
   </div>`;
@@ -824,6 +837,14 @@ function sortArrow(key){
   if(s.key!==key) return ' <span class="muted" style="font-weight:400">↕</span>';
   return s.dir==="asc"? ' ▲':' ▼';
 }
+// Renders who has made contact with a lead, plus who called last.
+function touchersCell(l){
+  const t=(l.touched_by||[]);
+  if(!t.length) return '<span class="muted">— not contacted</span>';
+  const pills=t.map(n=>`<span class="pill" style="margin:1px 3px 1px 0">${escapeHtml(n)}</span>`).join("");
+  const last=l.last_called_by? `<div class="muted" style="font-size:10px;margin-top:2px">last call: ${escapeHtml(l.last_called_by)}${l.last_called_date?' · '+fmtDate(l.last_called_date):''}</div>`:'';
+  return pills+last;
+}
 async function addAgent(){
   const name=document.getElementById("agName").value.trim();
   const team=document.getElementById("agTeam").value.trim()||"Unassigned";
@@ -928,7 +949,7 @@ function openLead(id){
 
      <div class="mfoot" style="margin-top:16px">
        ${(l.status!=="closed"&&l.status!=="dead")?`<button class="btn d sm" onclick="markDead('${l.id}');closeModal()">Mark Dead</button>`:""}
-       ${(l.status==="working"||l.status==="available"||l.status==="reopened")?`<button class="btn p sm" onclick="closeModal();openClose('${l.id}')">Close Deal</button>`:""}
+       ${(l.status==="working"||l.status==="available"||l.status==="reopened")?`<button class="btn p sm" onclick="closeModal();openClose('${l.id}')">Mark Sold</button>`:""}
        <button class="btn s" onclick="closeModal()">Done</button>
      </div>
    </div>
