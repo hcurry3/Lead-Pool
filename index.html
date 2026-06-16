@@ -840,7 +840,7 @@ async function doImport(){
     if(isHeaderRow(cells)) return;                        // ignore a pasted header line
     const l=parseLeadCells(cells);
     if(!l.name){ skipped++; return; }                    // no detectable name → skip
-    S.leads.push({id:uid("ld"), name:l.name, phone:l.phone||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0), email:l.email||"",
+    S.leads.push({id:uid("ld"), name:l.name, phone:l.phone||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0), email:l.email||"", dob:l.dob||"", gender:l.gender||"",
       imported_by:by, import_batch:"import-"+today(), imported_at:today(), status:"available", current_owner:null,
       touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
     added++;
@@ -864,16 +864,29 @@ function formatPhone(c){ let d=digitsOf(c); if(d.length===11&&d[0]==="1") d=d.sl
 function toStateCode(c){ const s=String(c==null?"":c).trim(); if(!s) return ""; const up=s.toUpperCase(); if(/^[A-Z]{2}$/.test(up)&&US_STATES[up]) return up; return STATE_NAME_TO_CODE[s.toLowerCase()]||""; }
 function isAgeCell(c){ const s=String(c==null?"":c).trim(); if(!/^\d{1,3}$/.test(s)) return false; const n=Number(s); return n>=1&&n<=120; }
 function looksLikeName(c){ const s=String(c==null?"":c).trim(); return s!=="" && /[A-Za-z]/.test(s) && !/\d/.test(s) && !/@/.test(s); }
+function isDobCell(c){ return /^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(String(c==null?"":c).trim()); }
+function genderOf(c){ const s=String(c==null?"":c).trim().toLowerCase(); if(/^(male|m)$/.test(s)) return "Male"; if(/^(female|f)$/.test(s)) return "Female"; if(/^(nonbinary|non-binary|nb|other)$/.test(s)) return "Other"; return ""; }
+function ageFromDob(dob){
+  const m=String(dob||"").match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/); if(!m) return 0;
+  let y=+m[3]; if(y<100) y+=(y>30?1900:2000);
+  const b=new Date(y,(+m[1])-1,+m[2]); if(isNaN(b.getTime())) return 0;
+  const now=new Date(); let a=now.getFullYear()-b.getFullYear();
+  const mo=now.getMonth()-b.getMonth(); if(mo<0||(mo===0&&now.getDate()<b.getDate())) a--;
+  return (a>=0&&a<=120)?a:0;
+}
 
 // Classify one row of cells into a lead, purely by content (order-independent).
 function parseLeadCells(cells){
   const arr=(cells||[]).map(c=>String(c==null?"":c).trim()).filter(c=>c!=="");
-  const out={name:"",phone:"",state:"",age:0,email:""};
+  const out={name:"",phone:"",state:"",age:0,email:"",dob:"",gender:""};
   const used=new Array(arr.length).fill(false);
   arr.forEach((c,i)=>{ if(!out.email && isEmail(c)){ out.email=c.toLowerCase(); used[i]=true; } });
   arr.forEach((c,i)=>{ if(used[i]||out.phone) return; if(isPhoneCell(c)){ out.phone=formatPhone(c); used[i]=true; } });
+  arr.forEach((c,i)=>{ if(used[i]||out.dob) return; if(isDobCell(c)){ out.dob=c; used[i]=true; } });
+  arr.forEach((c,i)=>{ if(used[i]||out.gender) return; if(/^(male|female|nonbinary|non-binary|other)$/i.test(c)){ out.gender=genderOf(c); used[i]=true; } });
   arr.forEach((c,i)=>{ if(used[i]||out.state) return; const st=toStateCode(c); if(st){ out.state=st; used[i]=true; } });
   arr.forEach((c,i)=>{ if(used[i]||out.age) return; if(isAgeCell(c)){ out.age=Number(c); used[i]=true; } });
+  if(!out.age && out.dob) out.age=ageFromDob(out.dob);
   // whatever alphabetic text is left is the name (covers "First Last" or split First/Last)
   const parts=[];
   arr.forEach((c,i)=>{ if(used[i]) return; if(looksLikeName(c)){ parts.push(c); used[i]=true; } });
@@ -893,13 +906,16 @@ function isHeaderRow(cells){
 }
 
 // Map header labels to column indices (used when a header row is present).
+// Handles "F Name"/"L Name", "First Name"/"Last Name", DOB, Gender, etc.
 function mapColumns(headerRow){
-  const idx={name:-1,first:-1,last:-1,phone:-1,state:-1,age:-1,email:-1};
+  const idx={name:-1,first:-1,last:-1,phone:-1,state:-1,age:-1,email:-1,dob:-1,gender:-1};
   (headerRow||[]).forEach((h,i)=>{
     const k=String(h==null?"":h).toLowerCase().trim();
     if(idx.email<0 && /e-?mail/.test(k)) idx.email=i;
-    else if(idx.first<0 && /^(first|fname|given)/.test(k)) idx.first=i;
-    else if(idx.last<0 && /^(last|lname|surname|family)/.test(k)) idx.last=i;
+    else if(idx.gender<0 && /(gender|sex)/.test(k)) idx.gender=i;
+    else if(idx.dob<0 && /(^dob$|date of birth|birth ?date|birthday|\bdob\b)/.test(k)) idx.dob=i;
+    else if(idx.first<0 && /^(first|fname|f[\s._-]*name|given)/.test(k)) idx.first=i;
+    else if(idx.last<0 && /^(last|lname|l[\s._-]*name|surname|family)/.test(k)) idx.last=i;
     else if(idx.name<0 && /(^name$|full ?name|lead ?name|client|contact)/.test(k)) idx.name=i;
     else if(idx.phone<0 && /(phone|number|cell|mobile|^tel)/.test(k)) idx.phone=i;
     else if(idx.state<0 && /(^state$|^st$|province|region)/.test(k)) idx.state=i;
@@ -910,14 +926,19 @@ function mapColumns(headerRow){
 function leadFromHeader(cells, idx){
   const get=i=> (i>=0 && i<cells.length)? String(cells[i]==null?"":cells[i]).trim() : "";
   let name=get(idx.name);
-  if(!name && (idx.first>=0 || idx.last>=0)) name=(get(idx.first)+" "+get(idx.last)).trim();
+  if(!name && (idx.first>=0 || idx.last>=0)) name=(get(idx.first)+" "+get(idx.last)).replace(/\s+/g," ").trim();
+  const dob=get(idx.dob);
   const ageM=get(idx.age).match(/\d{1,3}/);
+  let age = ageM? Number(ageM[0]) : 0;
+  if(!age && dob) age=ageFromDob(dob);
   return {
     name,
     phone: get(idx.phone)? formatPhone(get(idx.phone)) : "",
     state: toStateCode(get(idx.state)) || get(idx.state).toUpperCase(),
-    age: ageM? Number(ageM[0]) : 0,
-    email: isEmail(get(idx.email))? get(idx.email).toLowerCase() : get(idx.email)
+    age,
+    email: isEmail(get(idx.email))? get(idx.email).toLowerCase() : get(idx.email),
+    dob: dob||"",
+    gender: genderOf(get(idx.gender)) || get(idx.gender) || ""
   };
 }
 
@@ -934,11 +955,13 @@ function rowsToLeads(rows){
     let lead = idx ? leadFromHeader(cells, idx) : parseLeadCells(cells);
     if(idx){ // backfill anything the header didn't cover, by content
       const auto=parseLeadCells(cells);
-      if(!lead.name)  lead.name=auto.name;
-      if(!lead.phone) lead.phone=auto.phone;
-      if(!lead.state) lead.state=auto.state;
-      if(!lead.age)   lead.age=auto.age;
-      if(!lead.email) lead.email=auto.email;
+      if(!lead.name)   lead.name=auto.name;
+      if(!lead.phone)  lead.phone=auto.phone;
+      if(!lead.state)  lead.state=auto.state;
+      if(!lead.age)    lead.age=auto.age;
+      if(!lead.email)  lead.email=auto.email;
+      if(!lead.dob)    lead.dob=auto.dob;
+      if(!lead.gender) lead.gender=auto.gender;
     }
     if(lead.name) leads.push(lead);
   }
@@ -1020,7 +1043,7 @@ async function commitImport(){
   let added=0;
   pendingImport.forEach(l=>{
     if(!l.name) return;
-    S.leads.push({id:uid("ld"), name:l.name, phone:l.phone||"", email:l.email||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0),
+    S.leads.push({id:uid("ld"), name:l.name, phone:l.phone||"", email:l.email||"", dob:l.dob||"", gender:l.gender||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0),
       imported_by:by, import_batch:"file-"+today(), imported_at:today(), status:"available", current_owner:null,
       touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
     added++;
@@ -1240,7 +1263,7 @@ function openLead(id){
   <div class="modal-bg" onclick="if(event.target===this)closeModal()">
    <div class="modal" style="max-width:560px">
      <h3>${escapeHtml(l.name)}</h3>
-     <div class="ms">${escapeHtml(l.phone||'—')}${l.email?' · ✉ '+escapeHtml(l.email):''} · ${escapeHtml(l.state||'')} · age ${l.age||'—'} · <span class="tag t-${l.status}">${l.status}</span>${cbBadge(l)}</div>
+     <div class="ms">${escapeHtml(l.phone||'—')}${l.email?' · ✉ '+escapeHtml(l.email):''} · ${escapeHtml(l.state||'')} · age ${l.age||'—'}${l.gender?' · '+escapeHtml(l.gender):''}${l.dob?' · DOB '+escapeHtml(l.dob):''} · <span class="tag t-${l.status}">${l.status}</span>${cbBadge(l)}</div>
      <div style="margin:-6px 0 12px">
        ${l.chargebackClient?'<span class="muted" style="font-size:11px">Flagged as a former client who charged back.</span>':'<span class="muted" style="font-size:11px">Not flagged as a charged-back client.</span>'}
        ${canEdit?`<button class="btn s sm" style="margin-left:8px" onclick="toggleChargebackClient('${l.id}')">${l.chargebackClient?'Remove charge-back flag':'⚡ Mark charged-back client'}</button>`:''}
