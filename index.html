@@ -515,7 +515,12 @@ function renderImport(){
   <div class="panel">
     <h2>Import Leads <span class="sub">upload CSV, Excel, or PDF — or paste manually · anyone can add to the shared pool</span></h2>
     <div class="field"><label>Upload a file (CSV, Excel .xlsx/.xls, or PDF)</label>
-      <input type="file" id="impFile" accept=".csv,.xlsx,.xls,.pdf" onchange="importFile(event)"></div>
+      <div id="dropZone" ondragover="dzOver(event)" ondragenter="dzOver(event)" ondragleave="dzLeave(event)" ondrop="dzDrop(event)"
+        style="border:2px dashed var(--rule);border-radius:12px;padding:22px;text-align:center;background:#fff;transition:.15s">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px">📥 Drag &amp; drop a file here</div>
+        <div class="muted" style="font-size:12px;margin-bottom:10px">CSV, Excel, or PDF — or</div>
+        <input type="file" id="impFile" accept=".csv,.xlsx,.xls,.pdf" onchange="importFile(event)">
+      </div></div>
     <div class="muted" style="margin:-4px 0 10px">Tip: if the first row is a header (Name, Phone, State, Age, Email) the columns can be in any order. Otherwise that column order is assumed. CSV &amp; Excel are most reliable; PDF is best‑effort text extraction.</div>
     <div id="impPreview"></div>
     <div class="field" style="margin-top:6px"><label>Or paste one lead per line — Name, Phone, State, Age, Email (email optional)</label>
@@ -972,8 +977,8 @@ async function parsePdf(file){
   const rows=lines.map(l=>l.split(/\s*[,|\t]\s*|\s{2,}/).map(s=>s.trim()).filter(s=>s!==""));
   return rowsToLeads(rows);
 }
-async function importFile(e){
-  const file=e.target.files && e.target.files[0]; if(!file) return;
+async function processImportFile(file){
+  if(!file) return;
   const nm=file.name.toLowerCase();
   const prev=document.getElementById("impPreview");
   if(prev) prev.innerHTML='<div class="muted" style="padding:6px 0">Reading <b>'+escapeHtml(file.name)+'</b>…</div>';
@@ -991,8 +996,16 @@ async function importFile(e){
   }catch(err){
     if(prev) prev.innerHTML='<div style="color:var(--red)">Could not read that file: '+escapeHtml(String(err&&err.message||err))+'</div>';
   }
+}
+async function importFile(e){
+  const file=e.target.files && e.target.files[0];
+  await processImportFile(file);
   e.target.value=""; // let the same file be re-picked
 }
+// drag & drop handlers for the import drop zone
+function dzOver(e){ e.preventDefault(); const z=document.getElementById("dropZone"); if(z){ z.style.borderColor="var(--accent)"; z.style.background="#eef3f1"; } }
+function dzLeave(e){ const z=document.getElementById("dropZone"); if(z){ z.style.borderColor="var(--rule)"; z.style.background="#fff"; } }
+function dzDrop(e){ e.preventDefault(); dzLeave(e); const f=e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if(f) processImportFile(f); }
 function renderImportPreview(fname){
   const prev=document.getElementById("impPreview"); if(!prev) return;
   if(!pendingImport.length){
