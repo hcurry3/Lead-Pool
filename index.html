@@ -277,7 +277,7 @@ async function doLogin(){
 // profile the admin must approve. Sign out right after so pending users can't enter.
 function openSignup(){
   document.getElementById("modalRoot").innerHTML=`
-  <div class="modal-bg" onclick="if(event.target===this)closeSignup()">
+  <div class="modal-bg" style="z-index:60" onclick="if(event.target===this)closeSignup()">
    <div class="modal" style="max-width:420px">
      <h3>Request an Agent Account</h3>
      <div class="ms">Your request goes to an admin for approval. You can log in once it's approved.</div>
