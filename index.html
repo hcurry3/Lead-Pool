@@ -154,7 +154,7 @@
     <div class="loginbrand">For The People <span>LEAD ENGINE</span></div>
     <div class="loginsub">Sign in to your agent account</div>
     <div class="field"><label>Email</label><input id="luser" type="email" autocomplete="email" placeholder="you@email.com"></div>
-    <div class="field"><label>Password</label><input id="lpass" type="password" autocomplete="current-password" placeholder="password"></div>
+    <div class="field"><label>Password <span onclick="togglePw('lpass',this)" style="float:right;cursor:pointer;color:var(--accent);font-weight:700;text-transform:none;letter-spacing:0;font-size:11px">Show</span></label><input id="lpass" type="password" autocomplete="current-password" placeholder="password"></div>
     <div id="lerr" class="lerr"></div>
     <button class="btn p" style="width:100%;padding:12px;font-size:15px" id="loginBtn">Log In</button>
     <button class="btn s" style="width:100%;padding:10px;margin-top:8px" id="signupBtn">Request an agent account</button>
@@ -283,7 +283,7 @@ function openSignup(){
      <div class="ms">Your request goes to an admin for approval. You can log in once it's approved.</div>
      <div class="field"><label>Full name</label><input id="su_name" placeholder="Jane Agent"></div>
      <div class="field"><label>Email</label><input id="su_email" type="email" placeholder="jane@email.com"></div>
-     <div class="field"><label>Password</label><input id="su_pass" type="password" placeholder="at least 6 characters"></div>
+     <div class="field"><label>Password ${PWEYE('su_pass')}</label><input id="su_pass" type="password" placeholder="at least 6 characters"></div>
      <div id="su_err" class="lerr"></div>
      <div class="mfoot"><button class="btn s" onclick="closeSignup()">Cancel</button><button class="btn p" onclick="doSignup()">Submit request</button></div>
    </div>
@@ -311,8 +311,8 @@ function openPw(){
    <div class="modal" style="max-width:400px">
      <h3>Change Password</h3>
      <div class="ms">Set a new password for <b>${meName()}</b>.</div>
-     <div class="field"><label>New password</label><input id="pwNew" type="password" placeholder="at least 6 characters"></div>
-     <div class="field"><label>Confirm new password</label><input id="pwCon" type="password"></div>
+     <div class="field"><label>New password ${PWEYE('pwNew')}</label><input id="pwNew" type="password" placeholder="at least 6 characters"></div>
+     <div class="field"><label>Confirm new password ${PWEYE('pwCon')}</label><input id="pwCon" type="password"></div>
      <div id="pwErr" class="lerr"></div>
      <div class="mfoot"><button class="btn s" onclick="closeModal()">Cancel</button><button class="btn p" onclick="changePw()">Update</button></div>
    </div>
@@ -1464,6 +1464,9 @@ async function setAppointment(id){
 function go(v){ if((v==="admin"||v==="command")&&!isOwner()) v="dash"; S.view=v; render(); window.scrollTo(0,0); }
 function setBoard(m){ S.boardMode=m; render(); }
 function fillMe(){ const el=document.getElementById("meName"); if(el) el.textContent=meName(); }
+// Show/hide a password field.
+function togglePw(id, btn){ const el=document.getElementById(id); if(!el) return; const show=el.type==="password"; el.type=show?"text":"password"; if(btn) btn.textContent=show?"Hide":"Show"; }
+const PWEYE = id => `<span onclick="togglePw('${id}',this)" style="float:right;cursor:pointer;color:var(--accent);font-weight:700;text-transform:none;letter-spacing:0;font-size:11px">Show</span>`;
 
 /* ---------- init ---------- */
 async function init(){
