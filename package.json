@@ -1,0 +1,10 @@
+{
+  "name": "lead-engine",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "For The People — Lead Engine CRM (shared lead pool, pipeline, leaderboard)",
+  "dependencies": {
+    "@upstash/redis": "^1.34.3"
+  }
+}
