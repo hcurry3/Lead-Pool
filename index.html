@@ -969,9 +969,15 @@ function openLead(id){
 }
 function renderNotes(l){
   if(!l.notes||!l.notes.length) return `<div class="muted" style="padding:6px 0">No notes yet — log your first call above.</div>`;
-  return l.notes.slice().reverse().map(n=>`<div style="padding:8px 0;border-bottom:1px solid var(--rule)">
-     <div style="font-size:11px;color:var(--muted)"><b style="color:var(--ink)">${n.agent}</b> · ${fmtWhen(n.ts)}</div>
-     <div style="font-size:13px;margin-top:2px">${escapeHtml(n.text)}</div></div>`).join("");
+  const owner=isOwner(); // only admins/owners can delete notes
+  // keep each note's original index so deletion targets the right one
+  return l.notes.map((n,idx)=>({n,idx})).reverse().map(({n,idx})=>`<div style="padding:8px 0;border-bottom:1px solid var(--rule);display:flex;gap:8px;align-items:flex-start">
+     <div style="flex:1;min-width:0">
+       <div style="font-size:11px;color:var(--muted)"><b style="color:var(--ink)">${escapeHtml(n.agent)}</b> · ${fmtWhen(n.ts)}</div>
+       <div style="font-size:13px;margin-top:2px">${escapeHtml(n.text)}</div>
+     </div>
+     ${owner?`<button class="btn d sm" title="Delete note (admin only)" onclick="deleteNote('${l.id}',${idx})">✕</button>`:""}
+   </div>`).join("");
 }
 function refreshNotes(id){ const l=S.leads.find(x=>x.id===id); const el=document.getElementById("noteList"); if(el&&l) el.innerHTML=renderNotes(l); }
 async function addNote(id){
@@ -981,6 +987,15 @@ async function addNote(id){
   if(!l.notes) l.notes=[];
   l.notes.push({ts:new Date().toISOString(), agent:meName(), text:txt});
   box.value=""; await saveLeads(); refreshNotes(id);
+}
+// Admin-only: delete a single note by its original index.
+async function deleteNote(id, idx){
+  if(!isOwner()){ alert("Only an admin can delete notes."); return; }
+  const l=S.leads.find(x=>x.id===id); if(!l||!l.notes) return;
+  if(idx<0 || idx>=l.notes.length) return;
+  if(!confirm("Delete this note? This can't be undone.")) return;
+  l.notes.splice(idx,1);
+  await saveLeads(); refreshNotes(id);
 }
 async function logCall(id){
   const l=S.leads.find(x=>x.id===id); if(!l) return;
