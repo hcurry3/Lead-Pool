@@ -444,7 +444,6 @@ function renderMine(){
           <button class="btn s sm" onclick="openLead('${l.id}')">Open</button>
           <button class="btn g sm" onclick="markCalled('${l.id}')">📞 Called</button>
           <button class="btn p sm" onclick="openClose('${l.id}')">Sold</button>
-          <button class="btn d sm" onclick="markDead('${l.id}')">Dead</button>
         </td>
       </tr>`;}).join("")}
     </tbody></table>` : `<div class="empty">Nothing here yet. Head to the <a href="#" onclick="go('pool');return false">Lead Pool</a> and start calling leads.</div>`}
@@ -626,7 +625,6 @@ async function markCalled(id){
   l.notes.push({ts:new Date().toISOString(), agent:meName(), text:"📞 Logged a call"});
   await saveLeads(); render();
 }
-async function markDead(id){ const l=S.leads.find(x=>x.id===id); if(l){ l.status="dead"; l.current_owner=null; await saveLeads(); render(); } }
 
 function openClose(id){
   const l=S.leads.find(x=>x.id===id); if(!l) return;
@@ -963,7 +961,6 @@ function openLead(id){
      <div id="noteList" style="max-height:230px;overflow:auto">${renderNotes(l)}</div>
 
      <div class="mfoot" style="margin-top:16px">
-       ${(l.status!=="closed"&&l.status!=="dead")?`<button class="btn d sm" onclick="markDead('${l.id}');closeModal()">Mark Dead</button>`:""}
        ${(l.status==="working"||l.status==="available"||l.status==="reopened")?`<button class="btn p sm" onclick="closeModal();openClose('${l.id}')">Mark Sold</button>`:""}
        <button class="btn s" onclick="closeModal()">Done</button>
      </div>
