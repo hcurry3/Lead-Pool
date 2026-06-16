@@ -223,7 +223,7 @@ const DB = {
   }
 };
 
-let S = { leads:[], deals:[], agents:[], me:null, session:null, view:"dash", boardMode:"agent", cpl:1, poolSort:{key:"name",dir:"asc"} };
+let S = { leads:[], deals:[], agents:[], me:null, session:null, view:"dash", boardMode:"agent", cpl:1, poolSort:{key:"name",dir:"asc"}, poolStateFilter:"" };
 
 /* ---------- seed ---------- */
 function seed(){
@@ -371,6 +371,22 @@ function downlineAgents(){
   return S.agents.filter(a=>a.upline===me.name);
 }
 
+/* ---------- import-activity tracking (admin alert) ---------- */
+const IMPORT_GAP_DAYS = 7;
+function parseBatchDate(b){ const m=String(b||"").match(/\d{4}-\d{2}-\d{2}/); return m?m[0]:null; }
+function daysSince(dateStr){ if(!dateStr) return Infinity; return Math.floor((Date.now()-new Date(dateStr+"T00:00:00").getTime())/(1000*60*60*24)); }
+// Most recent date an agent imported leads (imported_at, else date in import_batch).
+function lastImportDate(agentName){
+  let latest=null;
+  S.leads.forEach(l=>{
+    if(l.imported_by!==agentName) return;
+    const d=l.imported_at||parseBatchDate(l.import_batch);
+    if(d && (!latest || d>latest)) latest=d;
+  });
+  return latest;
+}
+function setPoolState(v){ S.poolStateFilter=v||""; render(); }
+
 /* ---------- render router ---------- */
 const TITLES = {dash:"Dashboard",pool:"Lead Pool",import:"Import Leads",mine:"My Pipeline",followups:"Follow-ups",board:"Leaderboard",command:"Command Center",admin:"Admin"};
 function render(){
@@ -412,6 +428,7 @@ function renderDash(){
     <div class="kpi"><div class="l">Team Deals (7d)</div><div class="v">${weekDeals.length}</div></div>
     <div class="kpi"><div class="l">Team AP (7d)</div><div class="v gold">${MONEY(weekAP)}</div></div>
   </div>
+  ${renderImportAlerts()}
   ${renderStaleAlerts()}
   ${renderDueFollowupsPanel()}
   <div class="panel">
@@ -432,10 +449,22 @@ function renderDash(){
 
 /* ---------- LEAD POOL ---------- */
 function renderPool(){
-  const leads = sortLeads(dialable());
+  const all = dialable();
+  const states = Array.from(new Set(all.map(l=>l.state).filter(Boolean))).sort();
+  const filter = S.poolStateFilter||"";
+  const filtered = filter? all.filter(l=>l.state===filter) : all;
+  const leads = sortLeads(filtered);
   return `
   <div class="panel">
-    <h2>Shared Lead Pool <span class="sub">${leads.length} open · anyone can call · a lead is only claimed when it's sold</span></h2>
+    <h2>Shared Lead Pool <span class="sub">${filter? `${leads.length} in ${filter} · of ${all.length} open` : `${all.length} open`} · anyone can call · a lead is only claimed when it's sold</span></h2>
+    <div class="row" style="margin-bottom:12px">
+      <label class="muted" style="font-weight:700;text-transform:uppercase;letter-spacing:.4px;font-size:11px">Filter by state</label>
+      <select onchange="setPoolState(this.value)" style="padding:7px 9px;border:1px solid var(--rule);border-radius:8px;background:#fff;font-size:13px">
+        <option value="">All states (${all.length})</option>
+        ${states.map(s=>`<option value="${s}" ${s===filter?'selected':''}>${s} (${all.filter(l=>l.state===s).length})</option>`).join("")}
+      </select>
+      ${filter?`<button class="btn s sm" onclick="setPoolState('')">Clear filter</button>`:''}
+    </div>
     ${leads.length? `<table><thead><tr>
         <th style="cursor:pointer;user-select:none" onclick="setPoolSort('name')">Name${sortArrow('name')}</th>
         <th style="cursor:pointer;user-select:none" onclick="setPoolSort('state')">State${sortArrow('state')}</th>
@@ -454,7 +483,7 @@ function renderPool(){
           <button class="btn g sm" onclick="markCalled('${l.id}')">📞 Called</button>
           <button class="btn p sm" onclick="openClose('${l.id}')">Sold</button></td>
       </tr>`).join("")}
-    </tbody></table>` : `<div class="empty">Pool is empty. Import leads in Admin, or wait for chargebacks to recycle in.</div>`}
+    </tbody></table>` : `<div class="empty">${filter?`No open leads in ${filter}. <a href="#" onclick="setPoolState('');return false">Show all states</a>.`:`Pool is empty. Import leads on the Import tab, or wait for chargebacks to recycle in.`}</div>`}
   </div>`;
 }
 
@@ -754,7 +783,7 @@ async function doImport(){
     const l=parseLeadCells(cells);
     if(!l.name){ skipped++; return; }                    // no detectable name → skip
     S.leads.push({id:uid("ld"), name:l.name, phone:l.phone||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0), email:l.email||"",
-      imported_by:by, import_batch:"import-"+today(), status:"available", current_owner:null,
+      imported_by:by, import_batch:"import-"+today(), imported_at:today(), status:"available", current_owner:null,
       touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
     added++;
   });
@@ -934,7 +963,7 @@ async function commitImport(){
   pendingImport.forEach(l=>{
     if(!l.name) return;
     S.leads.push({id:uid("ld"), name:l.name, phone:l.phone||"", email:l.email||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0),
-      imported_by:by, import_batch:"file-"+today(), status:"available", current_owner:null,
+      imported_by:by, import_batch:"file-"+today(), imported_at:today(), status:"available", current_owner:null,
       touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
     added++;
   });
@@ -1073,6 +1102,26 @@ function renderStaleAlerts(){
   });
   html+=`</div>`;
   return html;
+}
+// Admin-only: agents who haven't uploaded leads in more than IMPORT_GAP_DAYS.
+function renderImportAlerts(){
+  if(!isOwner()) return "";
+  const flagged=S.agents
+    .filter(a=>a.role!=="owner")
+    .map(a=>{ const last=lastImportDate(a.name); return {a, last, days:daysSince(last)}; })
+    .filter(x=>x.days>IMPORT_GAP_DAYS)
+    .sort((x,y)=>y.days-x.days);
+  if(!flagged.length) return "";
+  return `<div class="panel" style="border-left:3px solid var(--gold)">
+    <h2>📥 Import Activity Alert <span class="sub">agents who haven't uploaded leads in over ${IMPORT_GAP_DAYS} days</span></h2>
+    <table><thead><tr><th>Agent</th><th>Team</th><th>Last upload</th></tr></thead><tbody>
+    ${flagged.map(x=>`<tr>
+      <td><b>${escapeHtml(x.a.name)}</b></td>
+      <td><span class="pill">${escapeHtml(x.a.team||'—')}</span></td>
+      <td style="color:var(--red)"><b>${x.last? (x.days+' days ago · '+fmtDate(x.last)) : 'never uploaded'}</b></td>
+    </tr>`).join("")}
+    </tbody></table>
+  </div>`;
 }
 function renderDueFollowupsPanel(){
   const due=followupsDue(); if(!due.length) return "";
