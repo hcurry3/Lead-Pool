@@ -113,6 +113,9 @@
       "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   }
 </script>
+<!-- Supabase client: real auth + Postgres with row-level security. The anon
+     key is public by design; RLS in the database is what enforces access. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 <div class="app" style="display:none">
@@ -150,7 +153,7 @@
   <div class="loginbox">
     <div class="loginbrand">For The People <span>LEAD ENGINE</span></div>
     <div class="loginsub">Sign in to your agent account</div>
-    <div class="field"><label>Username</label><input id="luser" autocomplete="username" placeholder="username"></div>
+    <div class="field"><label>Email</label><input id="luser" type="email" autocomplete="email" placeholder="you@email.com"></div>
     <div class="field"><label>Password</label><input id="lpass" type="password" autocomplete="current-password" placeholder="password"></div>
     <div id="lerr" class="lerr"></div>
     <button class="btn p" style="width:100%;padding:12px;font-size:15px" id="loginBtn">Log In</button>
@@ -159,46 +162,12 @@
   </div>
 </div>
 
-<!-- ===========================================================================
-  Shared-storage adapter.
-  The app below talks to `window.storage.get/set`. On a normal website that
-  object doesn't exist, so this shim wires it to:
-    - a real serverless backend  (/api/storage)  for SHARED data
-      (leads, deals, agents, notes) — everyone sees the same thing.
-    - the browser's localStorage  for PER-DEVICE data (shared === false),
-      e.g. each agent's own login session.
-  If the backend isn't reachable yet (Redis not connected), shared reads
-  return null and writes are no-ops, so the app still runs in a local/demo
-  mode instead of crashing.
-============================================================================ -->
+<!-- Auth + data: Supabase (real login + Postgres with row-level security). -->
 <script>
-window.storage = {
-  async get(key, shared = true){
-    if(shared === false){
-      try{ const v = localStorage.getItem("fp:" + key); return v == null ? null : { value: v }; }
-      catch(e){ return null; }
-    }
-    try{
-      const r = await fetch("/api/storage?key=" + encodeURIComponent(key));
-      if(!r.ok) return null;
-      const d = await r.json();
-      return (d && d.value != null) ? { value: d.value } : null;
-    }catch(e){ return null; }
-  },
-  async set(key, value, shared = true){
-    if(shared === false){
-      try{ localStorage.setItem("fp:" + key, value); }catch(e){}
-      return;
-    }
-    try{
-      await fetch("/api/storage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: key, value: value })
-      });
-    }catch(e){}
-  }
-};
+// Supabase client. Anon key is public (RLS is the real guard).
+const SUPABASE_URL  = "https://qvyjhsyyiiclxocexllx.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF2eWpoc3l5aWljbHhvY2V4bGx4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1Nzk4NzQsImV4cCI6MjA5NzE1NTg3NH0.K6yH-gjgdHMDsyTBxIonjLMZQNO951xhaMDehyZ6mCk";
+const SB = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 </script>
 
 <script>
@@ -209,79 +178,64 @@ const uid = p => p+"_"+Date.now().toString(36)+Math.random().toString(36).slice(
 const CARRIERS = ["Americo (Eagle Premier)","Aetna/CVS (Accendo)","Prosperity (New Vista)","American-Amicable (Senior Choice)","Foresters (Plan Right)","Mutual of Omaha (Living Promise)","Transamerica (Immediate Solution)"];
 const WEEK_GOAL = 5000;
 
-/* ---------- storage layer (shared across agents; in-memory fallback) ---------- */
-const DB = {
-  ok: (typeof window!=="undefined" && window.storage && typeof window.storage.get==="function"),
-  mem:{},
-  async load(key, def, shared=true){
-    if(!this.ok) return (key in this.mem)? this.mem[key] : def;
-    try{ const r = await window.storage.get(key, shared); return r? JSON.parse(r.value): def; }
-    catch(e){ return (key in this.mem)? this.mem[key] : def; }
-  },
-  async save(key, val, shared=true){
-    this.mem[key]=val;
-    if(!this.ok) return;
-    try{ await window.storage.set(key, JSON.stringify(val), shared); }catch(e){}
-  }
-};
-
 let S = { leads:[], deals:[], agents:[], me:null, session:null, view:"dash", boardMode:"agent", cpl:1, poolSort:{key:"name",dir:"asc"}, poolStateFilter:"", poolSearch:"", calRef:null };
 const DISPOSITIONS = ["No answer","Voicemail","Callback","Not interested","Wrong number","DNC"];
 
-/* ---------- seed ---------- */
-function seed(){
-  S.agents = [
-    {id:"ag_owner",  name:"You (Owner)", team:"HQ", upline:"—", username:"owner", pw:hashPw("demo123"), role:"owner", status:"active"},
-    {id:"ag_marcus", name:"Marcus Reed", team:"Alpha", upline:"Owner", username:"marcus", pw:hashPw("demo123"), role:"agent", status:"active"},
-    {id:"ag_jas",    name:"Jasmine Cole", team:"Alpha", upline:"Marcus Reed", username:"jasmine", pw:hashPw("demo123"), role:"agent", status:"active"},
-    {id:"ag_derek",  name:"Derek Hall", team:"Bravo", upline:"Owner", username:"derek", pw:hashPw("demo123"), role:"agent", status:"active"},
-    {id:"ag_tanya",  name:"Tanya Brooks", team:"Bravo", upline:"Derek Hall", username:"tanya", pw:hashPw("demo123"), role:"agent", status:"active"},
-  ];
-  const names=[["Earl Jennings","TN",71],["Gloria Pace","GA",68],["Roy Mercer","OH",77],["Betty Snyder","NC",74],
-    ["Wendell Cruz","TX",66],["Mae Holloway","AL",80],["Curtis Dale","SC",69],["Irene Boyd","KY",73],
-    ["Hank Mosley","MO",75],["Lucille Ray","FL",70],["Sam Pruitt","TN",64],["Edna Cole","VA",79]];
-  // Leads stay in the shared pool until SOLD. "contacted" leads are still
-  // available to everyone — the touched_by list just shows who has connected.
-  const st=["available","available","available","available","available","available","closed","dead","available","reopened","available","available"];
-  S.leads = names.map((n,i)=>({
-    id:uid("ld"), name:n[0], phone:"("+(200+i)+") 555-"+(1000+i), state:n[1], age:n[2],
-    imported_by: i%2? "Marcus Reed":"Derek Hall", import_batch:"aged-fex-"+today(),
-    status: st[i]||"available", current_owner: st[i]==="closed"?"ag_marcus":null,
-    touched_by: st[i]==="closed"?["Marcus Reed"]:[],
-    times_worked: st[i]==="dead"?6:(st[i]==="closed"?2:0),
-    last_called_by: st[i]==="closed"?"Marcus Reed":null, last_called_date: st[i]==="closed"?today():null
-  }));
-  // sample contact history + a scheduled appointment so the feature shows on first load.
-  // Mae stays in the pool (available) but is visibly "connected" by Jasmine.
-  const wk = S.leads.find(l=>l.name==="Mae Holloway");
-  if(wk){ wk.touched_by=["Jasmine Cole"]; wk.times_worked=1; wk.last_called_by="Jasmine Cole"; wk.last_called_date=today();
-    wk.followup_date=addDays(1); wk.followup_time="2:00 PM"; wk.followup_kind="appointment"; wk.followup_set_by="Jasmine Cole";
-    wk.notes=[{ts:new Date(Date.now()-86400000).toISOString(),agent:"Jasmine Cole",text:"Reached her — interested but wants her husband on the call. Booked the appointment for tomorrow."}]; }
-  const rp = S.leads.find(l=>l.status==="reopened");
-  if(rp){ rp.followup_date=today(); rp.followup_kind="followup"; rp.followup_set_by="Marcus Reed";
-    rp.notes=[{ts:new Date(Date.now()-3600000).toISOString(),agent:"Marcus Reed",text:"Chargeback — card declined. Recycled back to pool, needs a re-close."}]; }
-  const cl = S.leads.find(l=>l.status==="closed");
-  S.deals = [
-    {id:uid("dl"), lead_id: cl?cl.id:null, lead_name: cl?cl.name:"Roy Mercer", closed_by:"Marcus Reed", closer_team:"Alpha", closer_upline:"Owner",
-     carrier:CARRIERS[0], annual_ap:1140, monthly_premium:95, coverage_amount:10000, draft_date:today(), effective_date:today(), policy_number:"AM-88231", close_date:today(), status:"active"},
-    {id:uid("dl"), lead_id:null, lead_name:"Pearl Dawson", closed_by:"Derek Hall", closer_team:"Bravo", closer_upline:"Owner",
-     carrier:CARRIERS[5], annual_ap:960, monthly_premium:80, coverage_amount:8000, draft_date:today(), effective_date:today(), policy_number:"MO-55012", close_date:today(), status:"active"},
-    {id:uid("dl"), lead_id:null, lead_name:"Otis Crane", closed_by:"Jasmine Cole", closer_team:"Alpha", closer_upline:"Marcus Reed",
-     carrier:CARRIERS[1], annual_ap:1320, monthly_premium:110, coverage_amount:12000, draft_date:today(), effective_date:today(), policy_number:"AE-22190", close_date:today(), status:"active"},
-  ];
+/* ---------- Supabase data layer (per-row writes; no cross-agent clobbering) ---------- */
+const meNameById = id => { const a=S.agents.find(x=>x.id===id); return a?a.name:""; };
+function leadFromRow(r){
+  return { id:r.id, name:r.name||"", phone:r.phone||"", email:r.email||"", dob:r.dob||"", gender:r.gender||"",
+    state:r.state||"", age:r.age||0, status:r.status||"available", dnc:!!r.dnc, chargebackClient:!!r.chargeback_client,
+    imported_by:r.imported_by||"", imported_at:r.imported_at||null, import_batch:r.import_batch||"",
+    current_owner:r.current_owner||null, times_worked:r.times_worked||0,
+    last_called_by:r.last_called_by||null, last_called_date:r.last_called_date||null, last_disposition:r.last_disposition||"",
+    followup_date:r.followup_date||null, followup_time:r.followup_time||"", followup_kind:r.followup_kind||null, followup_set_by:r.followup_set_by||null,
+    touched_by:r.touched_by||[], dismissed_by:r.dismissed_by||[], notes:r.notes||[] };
 }
+function rowFromLead(l){
+  const r={ name:l.name||"", phone:l.phone||"", email:l.email||"", dob:l.dob||"", gender:l.gender||"",
+    state:l.state||"", age:Number(l.age||0), status:l.status||"available", dnc:!!l.dnc, chargeback_client:!!l.chargebackClient,
+    imported_by:l.imported_by||"", imported_at:l.imported_at||null, import_batch:l.import_batch||"",
+    current_owner:l.current_owner||null, current_owner_name:l.current_owner?meNameById(l.current_owner):"",
+    times_worked:Number(l.times_worked||0), last_called_by:l.last_called_by||"", last_called_date:l.last_called_date||null,
+    last_disposition:l.last_disposition||"", followup_date:l.followup_date||null, followup_time:l.followup_time||"",
+    followup_kind:l.followup_kind||"", followup_set_by:l.followup_set_by||"",
+    touched_by:l.touched_by||[], dismissed_by:l.dismissed_by||[], notes:l.notes||[] };
+  if(l.id) r.id=l.id;
+  return r;
+}
+function dealFromRow(r){
+  return { id:r.id, lead_id:r.lead_id, lead_name:r.lead_name, closed_by:r.closed_by, closer_team:r.closer_team, closer_upline:r.closer_upline,
+    carrier:r.carrier, annual_ap:Number(r.annual_ap||0), monthly_premium:Number(r.monthly_premium||0), coverage_amount:Number(r.coverage_amount||0),
+    draft_date:r.draft_date, effective_date:r.effective_date, close_date:r.close_date, policy_number:r.policy_number, status:r.status };
+}
+function rowFromDeal(d){
+  const r={ lead_id:d.lead_id||null, lead_name:d.lead_name||"", closed_by:d.closed_by||"", closer_team:d.closer_team||"", closer_upline:d.closer_upline||"",
+    carrier:d.carrier||"", annual_ap:Number(d.annual_ap||0), monthly_premium:Number(d.monthly_premium||0), coverage_amount:Number(d.coverage_amount||0),
+    draft_date:d.draft_date||null, effective_date:d.effective_date||null, close_date:d.close_date||null, policy_number:d.policy_number||"", status:d.status||"active" };
+  if(d.id) r.id=d.id;
+  return r;
+}
+function profileFromRow(p){ return {id:p.id, name:p.name||"", email:p.email||"", team:p.team||"Unassigned", upline:p.upline||"Owner", role:p.role||"agent", status:p.status||"pending"}; }
 
-/* ---------- persistence ---------- */
+async function saveLead(l){ const {error}=await SB.from("leads").upsert(rowFromLead(l)); if(error) console.warn("saveLead",error.message); }
+async function deleteLead(id){ const {error}=await SB.from("leads").delete().eq("id",id); if(error) console.warn("deleteLead",error.message); }
+async function insertLeads(arr){ const rows=arr.map(rowFromLead).map(r=>{ delete r.id; return r; }); const {error}=await SB.from("leads").insert(rows); if(error){ console.warn("insertLeads",error.message); alert("Import error: "+error.message); } }
+async function saveDeal(d){ const {data,error}=await SB.from("deals").upsert(rowFromDeal(d)).select(); if(error){ console.warn("saveDeal",error.message); } else if(data&&data[0]) d.id=data[0].id; }
+async function saveProfile(a){ const {error}=await SB.from("profiles").update({name:a.name,team:a.team,upline:a.upline,role:a.role,status:a.status}).eq("id",a.id); if(error) console.warn("saveProfile",error.message); }
+async function deleteProfile(id){ const {error}=await SB.from("profiles").delete().eq("id",id); if(error) console.warn("deleteProfile",error.message); }
+
+/* ---------- load everything from Supabase ---------- */
 async function loadAll(){
-  S.leads  = await DB.load("crm:leads", []);
-  S.deals  = await DB.load("crm:deals", []);
-  S.agents = await DB.load("crm:agents", []);
+  const [pr, lr, dr] = await Promise.all([
+    SB.from("profiles").select("*"),
+    SB.from("leads").select("*"),
+    SB.from("deals").select("*")
+  ]);
+  S.agents = (pr.data||[]).map(profileFromRow);
+  S.leads  = (lr.data||[]).map(leadFromRow);
+  S.deals  = (dr.data||[]).map(dealFromRow);
 }
-async function saveLeads(){ await DB.save("crm:leads", S.leads); }
-async function saveDeals(){ await DB.save("crm:deals", S.deals); }
-async function saveAgents(){ await DB.save("crm:agents", S.agents); }
-async function saveSession(){ await DB.save("crm:session", S.session, false); }
-function hashPw(s){ let h=5381; for(let i=0;i<(s||"").length;i++){ h=(((h<<5)+h)+s.charCodeAt(i))>>>0; } return "h"+h.toString(36); }
 function showApp(){
   document.getElementById("login").style.display="none";
   document.querySelector(".app").style.display="flex";
@@ -292,34 +246,44 @@ function showLogin(){
   document.querySelector(".app").style.display="none";
   document.getElementById("login").style.display="flex";
   document.getElementById("luser").value=""; document.getElementById("lpass").value="";
-  document.getElementById("lerr").textContent="";
   setTimeout(()=>{const u=document.getElementById("luser"); if(u) u.focus();},60);
 }
-async function doLogin(){
-  document.getElementById("lerr").style.color=""; // reset (signup uses green)
-  const u=document.getElementById("luser").value.trim().toLowerCase();
-  const p=document.getElementById("lpass").value;
-  const a=S.agents.find(x=>(x.username||"").toLowerCase()===u);
-  if(!a || a.pw!==hashPw(p)){ document.getElementById("lerr").textContent="Invalid username or password."; return; }
-  if(!(a.role==="owner" || !a.status || a.status==="active")){
-    document.getElementById("lerr").textContent = a.status==="rejected"
-      ? "Your access request was declined. Contact your admin."
-      : "Your account is awaiting admin approval.";
+// After a valid Supabase session: load data, then enforce approved status.
+async function afterLogin(session){
+  S.session=session; S.me=session.user.id;
+  await loadAll();
+  const me=agentById(S.me);
+  if(!me || (me.role!=="owner" && me.status!=="active")){
+    await SB.auth.signOut(); S.me=null; S.session=null;
+    showLogin();
+    const el=document.getElementById("lerr");
+    if(el){ el.style.color=""; el.textContent = (me&&me.status==="rejected")?"Your access request was declined. Contact your admin.":"Your account is awaiting admin approval."; }
     return;
   }
-  S.session=a.id; S.me=a.id; await saveSession(); showApp();
+  showApp();
 }
-// Self-signup → creates a PENDING agent the admin must approve.
+async function doLogin(){
+  const errEl=document.getElementById("lerr"); errEl.style.color=""; errEl.textContent="";
+  const email=(document.getElementById("luser").value||"").trim();
+  const pass=document.getElementById("lpass").value;
+  if(!email||!pass){ errEl.textContent="Enter your email and password."; return; }
+  errEl.textContent="Signing in…";
+  const { data, error } = await SB.auth.signInWithPassword({ email, password:pass });
+  if(error){ errEl.textContent=error.message||"Invalid email or password."; return; }
+  errEl.textContent="";
+  await afterLogin(data.session);
+}
+// Self-signup → Supabase creates the auth user; a DB trigger creates a PENDING
+// profile the admin must approve. Sign out right after so pending users can't enter.
 function openSignup(){
   document.getElementById("modalRoot").innerHTML=`
   <div class="modal-bg" onclick="if(event.target===this)closeSignup()">
    <div class="modal" style="max-width:420px">
      <h3>Request an Agent Account</h3>
-     <div class="ms">Your request is sent to an admin for approval. You'll be able to log in once it's approved.</div>
+     <div class="ms">Your request goes to an admin for approval. You can log in once it's approved.</div>
      <div class="field"><label>Full name</label><input id="su_name" placeholder="Jane Agent"></div>
-     <div class="field"><label>Team (optional)</label><input id="su_team" placeholder="Alpha / Bravo…"></div>
-     <div class="field"><label>Username</label><input id="su_user" placeholder="jane"></div>
-     <div class="field"><label>Password</label><input id="su_pass" type="password" placeholder="at least 4 characters"></div>
+     <div class="field"><label>Email</label><input id="su_email" type="email" placeholder="jane@email.com"></div>
+     <div class="field"><label>Password</label><input id="su_pass" type="password" placeholder="at least 6 characters"></div>
      <div id="su_err" class="lerr"></div>
      <div class="mfoot"><button class="btn s" onclick="closeSignup()">Cancel</button><button class="btn p" onclick="doSignup()">Submit request</button></div>
    </div>
@@ -328,28 +292,26 @@ function openSignup(){
 function closeSignup(){ document.getElementById("modalRoot").innerHTML=""; }
 async function doSignup(){
   const name=(document.getElementById("su_name").value||"").trim();
-  const team=(document.getElementById("su_team").value||"").trim()||"Unassigned";
-  const user=(document.getElementById("su_user").value||"").trim().toLowerCase();
+  const email=(document.getElementById("su_email").value||"").trim();
   const pass=document.getElementById("su_pass").value;
   const err=document.getElementById("su_err");
-  if(!name||!user||!pass){ err.textContent="Enter your name, a username, and a password."; return; }
-  if(pass.length<4){ err.textContent="Password must be at least 4 characters."; return; }
-  if(S.agents.some(x=>(x.username||"").toLowerCase()===user)){ err.textContent="That username is taken — pick another."; return; }
-  S.agents.push({id:uid("ag"), name, team, upline:"Owner", username:user, pw:hashPw(pass), role:"agent", status:"pending"});
-  await saveAgents();
+  if(!name||!email||!pass){ err.textContent="Enter your name, email, and a password."; return; }
+  if(pass.length<6){ err.textContent="Password must be at least 6 characters."; return; }
+  err.textContent="Submitting…";
+  const { error } = await SB.auth.signUp({ email, password:pass, options:{ data:{ name } } });
+  if(error){ err.textContent=error.message; return; }
+  await SB.auth.signOut();
   closeSignup();
-  document.getElementById("lerr").style.color="var(--accent)";
-  document.getElementById("lerr").textContent="Request submitted! An admin will review your account.";
+  const le=document.getElementById("lerr"); le.style.color="var(--accent)"; le.textContent="Request submitted! An admin will review your account.";
 }
-async function doLogout(){ S.session=null; S.me=null; await saveSession(); showLogin(); }
+async function doLogout(){ await SB.auth.signOut(); S.me=null; S.session=null; showLogin(); }
 function openPw(){
   document.getElementById("modalRoot").innerHTML=`
   <div class="modal-bg" onclick="if(event.target===this)closeModal()">
    <div class="modal" style="max-width:400px">
      <h3>Change Password</h3>
-     <div class="ms">Update the password for <b>${meName()}</b>.</div>
-     <div class="field"><label>Current password</label><input id="pwCur" type="password"></div>
-     <div class="field"><label>New password</label><input id="pwNew" type="password"></div>
+     <div class="ms">Set a new password for <b>${meName()}</b>.</div>
+     <div class="field"><label>New password</label><input id="pwNew" type="password" placeholder="at least 6 characters"></div>
      <div class="field"><label>Confirm new password</label><input id="pwCon" type="password"></div>
      <div id="pwErr" class="lerr"></div>
      <div class="mfoot"><button class="btn s" onclick="closeModal()">Cancel</button><button class="btn p" onclick="changePw()">Update</button></div>
@@ -357,13 +319,13 @@ function openPw(){
   </div>`;
 }
 async function changePw(){
-  const a=agentById(S.me); if(!a) return;
-  const cur=document.getElementById("pwCur").value, nw=document.getElementById("pwNew").value, cn=document.getElementById("pwCon").value;
+  const nw=document.getElementById("pwNew").value, cn=document.getElementById("pwCon").value;
   const err=document.getElementById("pwErr");
-  if(a.pw!==hashPw(cur)){ err.textContent="Current password is incorrect."; return; }
-  if((nw||"").length<4){ err.textContent="New password must be at least 4 characters."; return; }
+  if((nw||"").length<6){ err.textContent="New password must be at least 6 characters."; return; }
   if(nw!==cn){ err.textContent="New passwords don't match."; return; }
-  a.pw=hashPw(nw); await saveAgents(); closeModal(); alert("Password updated.");
+  const { error } = await SB.auth.updateUser({ password:nw });
+  if(error){ err.textContent=error.message; return; }
+  closeModal(); alert("Password updated.");
 }
 
 /* ---------- helpers ---------- */
@@ -712,11 +674,10 @@ function renderAdmin(){
 
   <div class="panel" ${S.agents.some(a=>a.status==="pending")?'style="border-left:3px solid var(--gold)"':''}>
     <h2>Pending Access Requests <span class="sub">${S.agents.filter(a=>a.status==="pending").length} awaiting approval</span></h2>
-    ${S.agents.filter(a=>a.status==="pending").length? `<table><thead><tr><th>Name</th><th>Username</th><th>Team</th><th></th></tr></thead><tbody>
+    ${S.agents.filter(a=>a.status==="pending").length? `<table><thead><tr><th>Name</th><th>Email</th><th></th></tr></thead><tbody>
       ${S.agents.filter(a=>a.status==="pending").map(a=>`<tr>
         <td><b>${escapeHtml(a.name)}</b></td>
-        <td><span class="pill" style="font-family:monospace">${escapeHtml(a.username||'')}</span></td>
-        <td><span class="pill">${escapeHtml(a.team||'—')}</span></td>
+        <td><span class="muted">${escapeHtml(a.email||'')}</span></td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn p sm" onclick="setAgentStatus('${a.id}','active')">Approve</button>
           <button class="btn d sm" onclick="setAgentStatus('${a.id}','rejected')">Decline</button></td>
@@ -725,25 +686,15 @@ function renderAdmin(){
   </div>
 
   <div class="panel">
-    <h2>Agents &amp; Logins <span class="sub">each agent gets a unique username</span></h2>
-    <table><thead><tr><th>Agent</th><th>Username</th><th>Team</th><th>Upline</th><th>Status</th><th></th></tr></thead><tbody>
+    <h2>Agents &amp; Logins <span class="sub">agents sign up themselves; approve &amp; assign them here</span></h2>
+    <table><thead><tr><th>Agent</th><th>Email</th><th>Team</th><th>Upline</th><th>Status</th><th></th></tr></thead><tbody>
       ${S.agents.map(a=>{const st=a.role==="owner"?"owner":(a.status||"active");
         const stColor= st==="pending"?"var(--gold)":st==="rejected"?"var(--red)":(st==="owner"?"var(--ink)":"var(--accent)");
-        return `<tr><td><b>${escapeHtml(a.name)}</b></td><td><span class="pill" style="font-family:monospace">${escapeHtml(a.username||'—')}</span></td><td><span class="pill">${escapeHtml(a.team||'')}</span></td><td class="muted">${escapeHtml(a.upline||'')}</td>
+        return `<tr><td><b>${escapeHtml(a.name)}</b></td><td class="muted">${escapeHtml(a.email||'—')}</td><td><span class="pill">${escapeHtml(a.team||'')}</span></td><td class="muted">${escapeHtml(a.upline||'')}</td>
         <td><span class="tag" style="background:${stColor}">${st}</span></td>
         <td style="text-align:right;white-space:nowrap">${a.role==="owner"?'':`<button class="btn s sm" onclick="openAgentEdit('${a.id}')">Assign</button> ${a.status==="rejected"?`<button class="btn s sm" onclick="setAgentStatus('${a.id}','active')">Reinstate</button> `:''}<button class="btn d sm" onclick="removeAgent('${a.id}')">Remove</button>`}</td></tr>`;}).join("")}
     </tbody></table>
-    <div class="grid2" style="margin-top:12px">
-      <div class="field"><label>Full name</label><input id="agName" placeholder="New agent name"></div>
-      <div class="field"><label>Team</label><input id="agTeam" placeholder="Alpha / Bravo…"></div>
-      <div class="field"><label>Username (unique)</label><input id="agUser" placeholder="firstname"></div>
-      <div class="field"><label>Temp password</label><input id="agPass" placeholder="set a password"></div>
-    </div>
-    <div class="row">
-      <div class="field" style="flex:1;margin:0"><label>Upline (their recruiter)</label>
-        <select id="agUp"><option value="Owner">Owner</option>${S.agents.map(a=>`<option>${a.name}</option>`).join("")}</select></div>
-      <button class="btn p" style="align-self:flex-end" onclick="addAgent()">Create Agent + Login</button>
-    </div>
+    <div class="muted" style="margin-top:10px">New agents request access from the login screen ("Request an agent account"). Approve them above, then <b>Assign</b> a team &amp; upline.</div>
   </div>
 
   <div class="panel">
@@ -765,8 +716,7 @@ function renderAdmin(){
   <div class="panel">
     <h2>Danger Zone</h2>
     <div class="row">
-      <button class="btn s" onclick="reseed()">Reset to demo data</button>
-      <button class="btn d" onclick="wipe()">Clear everything</button>
+      <button class="btn d" onclick="wipe()">Delete all leads &amp; deals</button>
     </div>
   </div>`;
 }
@@ -785,7 +735,7 @@ async function markCalled(id){
   if(l.dismissed_by) l.dismissed_by=l.dismissed_by.filter(n=>n!==meName());
   if(!l.notes) l.notes=[];
   l.notes.push({ts:new Date().toISOString(), agent:meName(), text:"📞 Logged a call"});
-  await saveLeads(); render();
+  await saveLead(l); render();
 }
 // Remove a lead from MY pipeline only. It stays in the shared pool and keeps
 // its full history; calling it again re-adds it.
@@ -794,7 +744,7 @@ async function removeFromPipeline(id){
   if(!confirm("Remove this lead from your pipeline? It stays in the shared pool and its history is kept.")) return;
   if(!l.dismissed_by) l.dismissed_by=[];
   if(!l.dismissed_by.includes(meName())) l.dismissed_by.push(meName());
-  await saveLeads(); render();
+  await saveLead(l); render();
 }
 
 function openClose(id){
@@ -829,31 +779,31 @@ async function confirmClose(id){
   const g=i=>document.getElementById(i).value;
   const ap=Number(g("cf_ap")||0);
   if(!ap){ alert("Enter the annual AP."); return; }
-  S.deals.push({
-    id:uid("dl"), lead_id:l.id, lead_name:l.name,
+  const deal={ lead_id:l.id, lead_name:l.name,
     closed_by:m.name, closer_team:m.team, closer_upline:m.upline,
     carrier:g("cf_carrier"), annual_ap:ap, monthly_premium:Number(g("cf_mp")||0),
     coverage_amount:Number(g("cf_cov")||0), draft_date:g("cf_draft"), effective_date:g("cf_eff"),
-    policy_number:g("cf_pol"), close_date:today(), status:"active"
-  });
+    policy_number:g("cf_pol"), close_date:today(), status:"active" };
   l.status="closed"; l.current_owner=S.me;
   if(!l.touched_by.includes(m.name)) l.touched_by.push(m.name);
-  await saveDeals(); await saveLeads(); closeModal(); S.view="board"; render();
+  await saveDeal(deal); S.deals.push(deal);
+  await saveLead(l); closeModal(); S.view="board"; render();
 }
 
 async function chargeback(dealId){
   const d=S.deals.find(x=>x.id===dealId); if(!d) return;
   d.status="chargeback";
-  if(d.lead_id){ const l=S.leads.find(x=>x.id===d.lead_id); if(l){ l.status="reopened"; l.current_owner=null; } }
-  await saveDeals(); await saveLeads(); render();
+  await saveDeal(d);
+  if(d.lead_id){ const l=S.leads.find(x=>x.id===d.lead_id); if(l){ l.status="reopened"; l.current_owner=null; await saveLead(l); } }
+  render();
 }
-async function del(id){ S.leads=S.leads.filter(l=>l.id!==id); await saveLeads(); render(); }
+async function del(id){ await deleteLead(id); S.leads=S.leads.filter(l=>l.id!==id); render(); }
 
 async function doImport(){
   const raw=document.getElementById("impBox").value.trim();
   const by=document.getElementById("impBy").value;
   if(!raw){ alert("Paste at least one lead."); return; }
-  let added=0, skipped=0, dupes=0;
+  let added=0, skipped=0, dupes=0; const toAdd=[];
   const seenPh=new Set(), seenEm=new Set();
   raw.split(/\r?\n/).forEach(line=>{
     if(!line.trim()) return;
@@ -864,12 +814,13 @@ async function doImport(){
     const ph=String(l.phone||"").replace(/\D/g,""); const em=(l.email||"").toLowerCase();
     if(isExistingLead(l) || (ph.length>=7 && seenPh.has(ph)) || (em && seenEm.has(em))){ dupes++; return; }
     if(ph.length>=7) seenPh.add(ph); if(em) seenEm.add(em);
-    S.leads.push({id:uid("ld"), name:l.name, phone:l.phone||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0), email:l.email||"", dob:l.dob||"", gender:l.gender||"",
+    toAdd.push({name:l.name, phone:l.phone||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0), email:l.email||"", dob:l.dob||"", gender:l.gender||"",
       imported_by:by, import_batch:"import-"+today(), imported_at:today(), status:"available", current_owner:null,
       touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
     added++;
   });
-  await saveLeads(); document.getElementById("impBox").value=""; render();
+  if(toAdd.length) await insertLeads(toAdd);
+  await loadAll(); document.getElementById("impBox").value=""; render();
   alert(added+" lead"+(added===1?"":"s")+" added to the pool."
     +(dupes?(" "+dupes+" duplicate"+(dupes===1?"":"s")+" skipped."):"")
     +(skipped?(" "+skipped+" line"+(skipped===1?"":"s")+" skipped — no name."):""));
@@ -1075,20 +1026,21 @@ async function commitImport(){
   if(!pendingImport.length) return;
   const sel=document.getElementById("impBy");
   const by= sel? sel.value : meName();
-  let added=0, dupes=0;
+  let added=0, dupes=0; const toAdd=[];
   const seenPh=new Set(), seenEm=new Set();
   pendingImport.forEach(l=>{
     if(!l.name) return;
     const ph=String(l.phone||"").replace(/\D/g,""); const em=(l.email||"").toLowerCase();
     if(isExistingLead(l) || (ph.length>=7 && seenPh.has(ph)) || (em && seenEm.has(em))){ dupes++; return; }
     if(ph.length>=7) seenPh.add(ph); if(em) seenEm.add(em);
-    S.leads.push({id:uid("ld"), name:l.name, phone:l.phone||"", email:l.email||"", dob:l.dob||"", gender:l.gender||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0),
+    toAdd.push({name:l.name, phone:l.phone||"", email:l.email||"", dob:l.dob||"", gender:l.gender||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0),
       imported_by:by, import_batch:"file-"+today(), imported_at:today(), status:"available", current_owner:null,
       touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
     added++;
   });
   pendingImport=[];
-  await saveLeads(); render();
+  if(toAdd.length) await insertLeads(toAdd);
+  await loadAll(); render();
   alert(added+" lead"+(added===1?"":"s")+" imported and added to the pool."+(dupes?(" "+dupes+" duplicate"+(dupes===1?"":"s")+" skipped."):""));
 }
 
@@ -1143,29 +1095,17 @@ function apptCell(l){
 function cbBadge(l){
   return l.chargebackClient? `<span class="tag" style="background:#9a6a00;margin-left:4px" title="Former client — previously bought and charged back">⚡ Charged back</span>` : "";
 }
-async function addAgent(){
-  const name=document.getElementById("agName").value.trim();
-  const team=document.getElementById("agTeam").value.trim()||"Unassigned";
-  const up=document.getElementById("agUp").value;
-  const user=document.getElementById("agUser").value.trim().toLowerCase();
-  const pass=document.getElementById("agPass").value;
-  if(!name||!user||!pass){ alert("Enter a name, username, and password."); return; }
-  if(S.agents.some(a=>(a.username||"").toLowerCase()===user)){ alert("That username is taken — pick another."); return; }
-  S.agents.push({id:uid("ag"), name, team, upline:up, username:user, pw:hashPw(pass), role:"agent", status:"active"});
-  await saveAgents(); render();
-  alert("Agent created. They can log in with username \""+user+"\".");
-}
-// Admin: approve / decline / reinstate / remove agent accounts.
+// Admin: approve / decline / reinstate agent accounts.
 async function setAgentStatus(id, status){
   if(!isOwner()){ alert("Admins only."); return; }
   const a=agentById(id); if(!a) return;
-  a.status=status; await saveAgents(); render();
+  a.status=status; await saveProfile(a); render();
 }
 async function removeAgent(id){
   if(!isOwner()){ alert("Admins only."); return; }
   const a=agentById(id); if(!a || a.role==="owner") return;
-  if(!confirm("Remove "+a.name+"? Their login is deleted.")) return;
-  S.agents=S.agents.filter(x=>x.id!==id); await saveAgents(); render();
+  if(!confirm("Remove "+a.name+"? This deletes their profile (their login stays in Supabase Auth until you delete it there).")) return;
+  await deleteProfile(id); S.agents=S.agents.filter(x=>x.id!==id); render();
 }
 // Admin: assign an agent to a team and/or upline (e.g. after approving them).
 function openAgentEdit(id){
@@ -1189,10 +1129,16 @@ async function saveAgentEdit(id){
   const a=agentById(id); if(!a) return;
   a.team=(document.getElementById("ag_team").value||"").trim()||"Unassigned";
   a.upline=document.getElementById("ag_upline").value;
-  await saveAgents(); closeModal();
+  await saveProfile(a); closeModal(); render();
 }
-async function reseed(){ if(!confirm("Reset to demo data? This replaces current data.")) return; seed(); await saveLeads(); await saveDeals(); await saveAgents(); S.session=S.agents[0].id; S.me=S.session; await saveSession(); fillMe(); render(); }
-async function wipe(){ if(!confirm("Clear ALL leads, deals, and agents?")) return; S.leads=[];S.deals=[];S.agents=[]; await saveLeads();await saveDeals();await saveAgents(); seed(); await saveLeads();await saveDeals();await saveAgents(); S.session=S.agents[0].id; S.me=S.session; await saveSession(); fillMe(); render(); }
+// Owner only: clear all leads & deals (does not touch agent logins).
+async function wipe(){
+  if(!isOwner()){ alert("Admins only."); return; }
+  if(!confirm("Delete ALL leads and deals? This cannot be undone. (Agent logins are kept.)")) return;
+  await SB.from("deals").delete().neq("id","00000000-0000-0000-0000-000000000000");
+  await SB.from("leads").delete().neq("id","00000000-0000-0000-0000-000000000000");
+  await loadAll(); render(); alert("All leads and deals cleared.");
+}
 
 /* ---------- follow-ups & notes ---------- */
 function addDays(n){ const d=new Date(); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
@@ -1431,7 +1377,7 @@ async function addNote(id){
   if(!txt){ box.focus(); return; }
   if(!l.notes) l.notes=[];
   l.notes.push({ts:new Date().toISOString(), agent:meName(), text:txt});
-  box.value=""; await saveLeads(); refreshNotes(id);
+  box.value=""; await saveLead(l); refreshNotes(id);
 }
 // Edit a lead's name / phone / email. Allowed only for an admin/owner or the
 // agent who imported the lead.
@@ -1443,14 +1389,14 @@ async function saveLeadContact(id){
   const email=(document.getElementById("ed_email").value||"").trim();
   if(!name){ alert("Name can't be empty."); return; }
   l.name=name; l.phone=phone; l.email=email;
-  await saveLeads(); openLead(id); render();
+  await saveLead(l); openLead(id); render();
 }
 // Toggle the charged-back-client flag. Importer or admin only.
 async function toggleChargebackClient(id){
   const l=S.leads.find(x=>x.id===id); if(!l) return;
   if(!(isOwner() || (l.imported_by && l.imported_by===meName()))){ alert("Only an admin or the agent who imported this lead can change this flag."); return; }
   l.chargebackClient=!l.chargebackClient;
-  await saveLeads(); openLead(id); render();
+  await saveLead(l); openLead(id); render();
 }
 // Admin-only: delete a single note by its original index.
 async function deleteNote(id, idx){
@@ -1459,7 +1405,7 @@ async function deleteNote(id, idx){
   if(idx<0 || idx>=l.notes.length) return;
   if(!confirm("Delete this note? This can't be undone.")) return;
   l.notes.splice(idx,1);
-  await saveLeads(); refreshNotes(id);
+  await saveLead(l); refreshNotes(id);
 }
 async function logCall(id){
   const l=S.leads.find(x=>x.id===id); if(!l) return;
@@ -1478,24 +1424,24 @@ async function logCall(id){
   const text = (dispo? "["+dispo+"]" : "") + (txt? (dispo?" ":"")+txt : (dispo?"":"Called — no answer / no note"));
   l.notes.push({ts:new Date().toISOString(), agent:meName(), text:text, disposition:dispo||""});
   box.value=""; if(dispoSel) dispoSel.value="";
-  await saveLeads(); refreshNotes(id); render();
+  await saveLead(l); refreshNotes(id); render();
 }
 async function setFollowup(id,days,clear){
   const l=S.leads.find(x=>x.id===id); if(!l) return;
   if(clear){ l.followup_date=null; l.followup_time=""; l.followup_kind=null; l.followup_set_by=null; }
   else { l.followup_date=addDays(days); l.followup_time=""; l.followup_kind="followup"; l.followup_set_by=meName(); }
-  await saveLeads(); openLead(id);
+  await saveLead(l); openLead(id);
 }
 async function setFollowupDate(id,val){
   const l=S.leads.find(x=>x.id===id); if(!l||!val) return;
-  l.followup_date=val; l.followup_time=""; l.followup_kind="followup"; l.followup_set_by=meName(); await saveLeads(); openLead(id);
+  l.followup_date=val; l.followup_time=""; l.followup_kind="followup"; l.followup_set_by=meName(); await saveLead(l); openLead(id);
 }
 async function setAppointment(id){
   const l=S.leads.find(x=>x.id===id); if(!l) return;
   const d=document.getElementById("apDate").value, t=document.getElementById("apTime").value;
   if(!d){ alert("Pick an appointment date."); return; }
   l.followup_date=d; l.followup_time=t?fmtTime(t):""; l.followup_kind="appointment"; l.followup_set_by=meName();
-  await saveLeads(); openLead(id);
+  await saveLead(l); openLead(id);
 }
 
 /* ---------- nav ---------- */
@@ -1505,8 +1451,6 @@ function fillMe(){ const el=document.getElementById("meName"); if(el) el.textCon
 
 /* ---------- init ---------- */
 async function init(){
-  await loadAll();
-  if(!S.agents.length){ seed(); await saveLeads(); await saveDeals(); await saveAgents(); }
   document.getElementById("nav").addEventListener("click",e=>{const b=e.target.closest("button");if(b){go(b.dataset.v);}});
   document.getElementById("refreshBtn").addEventListener("click",async()=>{await loadAll(); render();});
   document.getElementById("logoutBtn").addEventListener("click",doLogout);
@@ -1515,10 +1459,10 @@ async function init(){
   document.getElementById("signupBtn").addEventListener("click",openSignup);
   document.getElementById("lpass").addEventListener("keydown",e=>{ if(e.key==="Enter") doLogin(); });
   document.getElementById("luser").addEventListener("keydown",e=>{ if(e.key==="Enter") document.getElementById("lpass").focus(); });
-  document.getElementById("loginhint").innerHTML='Demo logins — <b>owner</b>, <b>marcus</b>, <b>jasmine</b>, <b>derek</b>, <b>tanya</b> · password <b>demo123</b>';
-  // restore the per-device session (stored in localStorage, not shared)
-  S.session = await DB.load("crm:session", null, false);
-  if(S.session && agentById(S.session)){ S.me = S.session; showApp(); }
+  document.getElementById("loginhint").innerHTML='New here? Click <b>Request an agent account</b> — an admin approves you, then you can log in.';
+  // restore an existing Supabase session if present
+  const { data:{ session } } = await SB.auth.getSession();
+  if(session){ await afterLogin(session); }
   else { showLogin(); }
 }
 init();
