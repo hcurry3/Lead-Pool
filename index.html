@@ -336,9 +336,39 @@ function withinDays(dateStr, days){
 }
 function dialable(){ return S.leads.filter(l=>l.status==="available"||l.status==="reopened"); }
 // "My Pipeline" = open leads I've personally made contact with (called),
-// not sold or dead. Leads are never locked to me until I sell them.
-function myWorking(){ return S.leads.filter(l=> (l.touched_by||[]).includes(meName()) && l.status!=="closed" && l.status!=="dead"); }
+// not sold/dead, and not removed from my pipeline. Leads are never locked
+// to me until I sell them.
+function myWorking(){ return S.leads.filter(l=> (l.touched_by||[]).includes(meName()) && l.status!=="closed" && l.status!=="dead" && !((l.dismissed_by||[]).includes(meName()))); }
 function activeDeals(){ return S.deals.filter(d=>d.status==="active"); }
+
+/* ---------- pipeline staleness / upline alerts ---------- */
+const STALE_DAYS = 5;
+// How long a lead has been in this agent's pipeline: days since their first
+// contact with it (earliest note they authored, else last call date).
+function leadAgeDays(l, agentName){
+  let firstTs=null;
+  (l.notes||[]).forEach(n=>{ if(n.agent===agentName && (!firstTs || n.ts<firstTs)) firstTs=n.ts; });
+  let baseMs=null;
+  if(firstTs) baseMs=new Date(firstTs).getTime();
+  else if(l.last_called_date) baseMs=new Date(l.last_called_date+"T00:00:00").getTime();
+  if(!baseMs) return 0;
+  return Math.floor((Date.now()-baseMs)/(1000*60*60*24));
+}
+// Open leads in a given agent's pipeline that have gone stale (> STALE_DAYS).
+function staleLeadsFor(agentName){
+  return S.leads.filter(l=>
+    (l.touched_by||[]).includes(agentName) &&
+    l.status!=="closed" && l.status!=="dead" &&
+    !((l.dismissed_by||[]).includes(agentName)) &&
+    leadAgeDays(l, agentName) > STALE_DAYS
+  );
+}
+// Agents I'm the upline for. Owner sees the whole org; a manager sees direct downline.
+function downlineAgents(){
+  const me=meObj();
+  if(isOwner()) return S.agents.filter(a=>a.role!=="owner" && a.name!==me.name);
+  return S.agents.filter(a=>a.upline===me.name);
+}
 
 /* ---------- render router ---------- */
 const TITLES = {dash:"Dashboard",pool:"Lead Pool",mine:"My Pipeline",followups:"Follow-ups",board:"Leaderboard",command:"Command Center",admin:"Admin"};
@@ -380,6 +410,7 @@ function renderDash(){
     <div class="kpi"><div class="l">Team Deals (7d)</div><div class="v">${weekDeals.length}</div></div>
     <div class="kpi"><div class="l">Team AP (7d)</div><div class="v gold">${MONEY(weekAP)}</div></div>
   </div>
+  ${renderStaleAlerts()}
   ${renderDueFollowupsPanel()}
   <div class="panel">
     <h2>Top Closers <span class="sub">this week's standings</span></h2>
@@ -437,13 +468,16 @@ function renderMine(){
         <th>Calls</th><th>Follow-up</th><th></th></tr></thead><tbody>
       ${leads.map(l=>{
         const fu= l.followup_date? (schedBadge(l)+`<div class="muted" style="font-size:10px">${l.followup_kind==='appointment'?'Appt':'Follow-up'} · ${l.followup_set_by||''}</div>`) : `<span class="muted">—</span>`;
+        const age=leadAgeDays(l, meName());
+        const stale= age>STALE_DAYS? ` <span class="tag" style="background:var(--red)">${age}d — stale</span>` : (age>=STALE_DAYS-1? ` <span class="muted" style="font-size:10px">${age}d</span>`:"");
         return `<tr>
-        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${l.name}</b></a><div class="muted">${l.phone}</div></td>
+        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${l.name}</b></a>${stale}<div class="muted">${l.phone}</div></td>
         <td>${l.state}</td><td>${l.times_worked}×</td><td>${fu}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn s sm" onclick="openLead('${l.id}')">Open</button>
           <button class="btn g sm" onclick="markCalled('${l.id}')">📞 Called</button>
           <button class="btn p sm" onclick="openClose('${l.id}')">Sold</button>
+          <button class="btn d sm" onclick="removeFromPipeline('${l.id}')">Remove</button>
         </td>
       </tr>`;}).join("")}
     </tbody></table>` : `<div class="empty">Nothing here yet. Head to the <a href="#" onclick="go('pool');return false">Lead Pool</a> and start calling leads.</div>`}
@@ -559,8 +593,8 @@ function renderAdmin(){
       <input type="file" id="impFile" accept=".csv,.xlsx,.xls,.pdf" onchange="importFile(event)"></div>
     <div class="muted" style="margin:-4px 0 10px">Tip: if the first row is a header (Name, Phone, State, Age) the columns can be in any order. Otherwise that column order is assumed. CSV &amp; Excel are most reliable; PDF is best‑effort text extraction.</div>
     <div id="impPreview"></div>
-    <div class="field" style="margin-top:6px"><label>Or paste one lead per line — Name, Phone, State, Age</label>
-      <textarea id="impBox" rows="4" placeholder="Earl Jennings, (731) 555-0101, TN, 71&#10;Gloria Pace, (706) 555-0142, GA, 68"></textarea></div>
+    <div class="field" style="margin-top:6px"><label>Or paste one lead per line — Name, Phone, State, Age, Email (email optional)</label>
+      <textarea id="impBox" rows="4" placeholder="Earl Jennings, (731) 555-0101, TN, 71, earl@email.com&#10;Gloria Pace, (706) 555-0142, GA, 68"></textarea></div>
     <div class="row">
       <div class="field" style="margin:0"><label>Imported by</label>
         <select id="impBy">${S.agents.map(a=>`<option value="${a.name}">${a.name}</option>`).join("")}</select></div>
@@ -621,8 +655,19 @@ async function markCalled(id){
   l.last_called_by=meName(); l.last_called_date=today();
   if(!l.touched_by) l.touched_by=[];
   if(!l.touched_by.includes(meName())) l.touched_by.push(meName());
+  // calling a lead again brings it back into my pipeline
+  if(l.dismissed_by) l.dismissed_by=l.dismissed_by.filter(n=>n!==meName());
   if(!l.notes) l.notes=[];
   l.notes.push({ts:new Date().toISOString(), agent:meName(), text:"📞 Logged a call"});
+  await saveLeads(); render();
+}
+// Remove a lead from MY pipeline only. It stays in the shared pool and keeps
+// its full history; calling it again re-adds it.
+async function removeFromPipeline(id){
+  const l=S.leads.find(x=>x.id===id); if(!l) return;
+  if(!confirm("Remove this lead from your pipeline? It stays in the shared pool and its history is kept.")) return;
+  if(!l.dismissed_by) l.dismissed_by=[];
+  if(!l.dismissed_by.includes(meName())) l.dismissed_by.push(meName());
   await saveLeads(); render();
 }
 
@@ -686,7 +731,7 @@ async function doImport(){
   raw.split("\n").forEach(line=>{
     const p=line.split(",").map(s=>s.trim());
     if(!p[0]) return;
-    S.leads.push({id:uid("ld"), name:p[0], phone:p[1]||"", state:(p[2]||"").toUpperCase(), age:Number(p[3]||0),
+    S.leads.push({id:uid("ld"), name:p[0], phone:p[1]||"", state:(p[2]||"").toUpperCase(), age:Number(p[3]||0), email:p[4]||"",
       imported_by:by, import_batch:"import-"+today(), status:"available", current_owner:null,
       touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
     added++;
@@ -701,10 +746,11 @@ let pendingImport = [];
 // Figure out which column is which from a header row. Returns -1 for any
 // field we can't find, in which case the caller falls back to fixed order.
 function mapColumns(headerRow){
-  const idx={name:-1,phone:-1,state:-1,age:-1};
+  const idx={name:-1,phone:-1,state:-1,age:-1,email:-1};
   (headerRow||[]).forEach((h,i)=>{
     const k=String(h||"").toLowerCase().trim();
-    if(idx.name<0 && /(^name$|full ?name|lead ?name|client|contact|first)/.test(k)) idx.name=i;
+    if(idx.email<0 && /(e-?mail)/.test(k)) idx.email=i;
+    else if(idx.name<0 && /(^name$|full ?name|lead ?name|client|contact|first)/.test(k)) idx.name=i;
     else if(idx.phone<0 && /(phone|number|cell|mobile|^tel)/.test(k)) idx.phone=i;
     else if(idx.state<0 && /(^state$|^st$|province|region)/.test(k)) idx.state=i;
     else if(idx.age<0 && /(^age$|^age\b)/.test(k)) idx.age=i;
@@ -717,15 +763,15 @@ function rowsToLeads(rows){
   if(!rows.length) return [];
   let idx=mapColumns(rows[0]);
   let dataRows;
-  if(idx.name>=0 || idx.phone>=0){ dataRows=rows.slice(1); }          // had a header
-  else { idx={name:0,phone:1,state:2,age:3}; dataRows=rows; }          // no header → fixed order
+  if(idx.name>=0 || idx.phone>=0 || idx.email>=0){ dataRows=rows.slice(1); }  // had a header
+  else { idx={name:0,phone:1,state:2,age:3,email:-1}; dataRows=rows; }          // no header → fixed order
   const leads=[];
   dataRows.forEach(r=>{
     const get=i=> (i>=0 && i<r.length) ? String(r[i]==null?"":r[i]).trim() : "";
     const name=get(idx.name);
     if(!name) return;
     const ageRaw=get(idx.age); const ageM=ageRaw.match(/\d{1,3}/);
-    leads.push({ name, phone:get(idx.phone), state:get(idx.state).toUpperCase(), age: ageM?Number(ageM[0]):0 });
+    leads.push({ name, phone:get(idx.phone), state:get(idx.state).toUpperCase(), age: ageM?Number(ageM[0]):0, email:get(idx.email) });
   });
   return leads;
 }
@@ -803,7 +849,7 @@ async function commitImport(){
   let added=0;
   pendingImport.forEach(l=>{
     if(!l.name) return;
-    S.leads.push({id:uid("ld"), name:l.name, phone:l.phone||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0),
+    S.leads.push({id:uid("ld"), name:l.name, phone:l.phone||"", email:l.email||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0),
       imported_by:by, import_batch:"file-"+today(), status:"available", current_owner:null,
       touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
     added++;
@@ -912,6 +958,33 @@ function renderFollowups(){
     </tbody></table>` : `<div class="empty">No follow-ups or appointments scheduled. Open any lead and set one.</div>`}
   </div>`;
 }
+function staleRow(l, agentName){
+  const days=leadAgeDays(l, agentName);
+  return `<tr>
+    <td><a href="#" onclick="openLead('${l.id}');return false"><b>${escapeHtml(l.name)}</b></a> <span class="muted">${escapeHtml(l.phone||'')}</span>
+      <div class="muted"><b style="color:var(--red)">${days} days</b> in ${escapeHtml(agentName)}'s pipeline${l.followup_date?' · '+(l.followup_kind==='appointment'?'appt ':'follow-up ')+fmtDate(l.followup_date):' · no follow-up set'}</div></td>
+    <td style="text-align:right;white-space:nowrap"><button class="btn p sm" onclick="openLead('${l.id}')">Open</button></td>
+  </tr>`;
+}
+// In-app stale-lead alerts: the agent sees their own, and an upline sees their
+// downline's. Triggers when a lead has been in a pipeline more than 5 days.
+function renderStaleAlerts(){
+  const mine=staleLeadsFor(meName());
+  const team=downlineAgents().map(a=>({agent:a, leads:staleLeadsFor(a.name)})).filter(x=>x.leads.length);
+  if(!mine.length && !team.length) return "";
+  let html=`<div class="panel" style="border-left:3px solid var(--red)">
+    <h2>⚠ Stale Lead Alerts <span class="sub">in a pipeline longer than ${STALE_DAYS} days — work it or remove it</span></h2>`;
+  if(mine.length){
+    html+=`<div style="font-weight:700;font-size:12px;margin:2px 0 6px">Your pipeline — ${mine.length} need attention</div>
+      <table><tbody>${mine.map(l=>staleRow(l, meName())).join("")}</tbody></table>`;
+  }
+  team.forEach(x=>{
+    html+=`<div style="font-weight:700;font-size:12px;margin:14px 0 6px">${escapeHtml(x.agent.name)} <span class="muted" style="font-weight:500">(${isOwner()?'your team':'your downline'})</span> — ${x.leads.length} stale</div>
+      <table><tbody>${x.leads.map(l=>staleRow(l, x.agent.name)).join("")}</tbody></table>`;
+  });
+  html+=`</div>`;
+  return html;
+}
 function renderDueFollowupsPanel(){
   const due=followupsDue(); if(!due.length) return "";
   return `<div class="panel" style="border-left:3px solid var(--gold)">
@@ -927,12 +1000,25 @@ function renderDueFollowupsPanel(){
 function openLead(id){
   const l=S.leads.find(x=>x.id===id); if(!l) return;
   if(!l.notes) l.notes=[];
+  // Only an admin/owner or the person who imported the lead may edit its
+  // name / phone / email.
+  const canEdit = isOwner() || (l.imported_by && l.imported_by===meName());
   const fuLabel=l.followup_date? `<span class="pill" style="background:#eef3f1;color:${l.followup_kind==='appointment'?'var(--blue)':'var(--accent)'}">${l.followup_kind==='appointment'?'Appointment':'Follow-up'}: ${fmtDate(l.followup_date)}${(l.followup_kind==='appointment'&&l.followup_time)?' at '+l.followup_time:''} &middot; set by ${l.followup_set_by||meName()}</span>` : `<span class="muted">none set</span>`;
   document.getElementById("modalRoot").innerHTML=`
   <div class="modal-bg" onclick="if(event.target===this)closeModal()">
    <div class="modal" style="max-width:560px">
-     <h3>${l.name}</h3>
-     <div class="ms">${l.phone} · ${l.state} · age ${l.age} · <span class="tag t-${l.status}">${l.status}</span></div>
+     <h3>${escapeHtml(l.name)}</h3>
+     <div class="ms">${escapeHtml(l.phone||'—')}${l.email?' · ✉ '+escapeHtml(l.email):''} · ${escapeHtml(l.state||'')} · age ${l.age||'—'} · <span class="tag t-${l.status}">${l.status}</span></div>
+     ${canEdit?`
+     <div style="background:#f4f6f5;border:1px solid var(--rule);border-radius:10px;padding:10px 12px;margin-bottom:14px">
+       <div style="font-size:10.5px;color:var(--muted);font-weight:700;letter-spacing:.4px;margin-bottom:6px">EDIT CONTACT · ${isOwner()?'admin':'you imported this lead'}</div>
+       <div class="grid2">
+         <div class="field" style="margin:0"><label>Name</label><input id="ed_name" value="${escapeHtml(l.name||'')}"></div>
+         <div class="field" style="margin:0"><label>Phone</label><input id="ed_phone" value="${escapeHtml(l.phone||'')}"></div>
+         <div class="field" style="margin:0"><label>Email</label><input id="ed_email" value="${escapeHtml(l.email||'')}"></div>
+         <div class="field" style="margin:0;align-self:end"><button class="btn p sm" onclick="saveLeadContact('${l.id}')">Save contact</button></div>
+       </div>
+     </div>`:""}
 
      <div class="field" style="margin-bottom:6px"><label>Scheduled &nbsp; ${fuLabel}</label></div>
      <div style="font-size:10.5px;color:var(--muted);font-weight:700;letter-spacing:.4px;margin-bottom:4px">FOLLOW-UP (CALLBACK)</div>
@@ -987,6 +1073,18 @@ async function addNote(id){
   if(!l.notes) l.notes=[];
   l.notes.push({ts:new Date().toISOString(), agent:meName(), text:txt});
   box.value=""; await saveLeads(); refreshNotes(id);
+}
+// Edit a lead's name / phone / email. Allowed only for an admin/owner or the
+// agent who imported the lead.
+async function saveLeadContact(id){
+  const l=S.leads.find(x=>x.id===id); if(!l) return;
+  if(!(isOwner() || (l.imported_by && l.imported_by===meName()))){ alert("Only an admin or the agent who imported this lead can edit it."); return; }
+  const name=(document.getElementById("ed_name").value||"").trim();
+  const phone=(document.getElementById("ed_phone").value||"").trim();
+  const email=(document.getElementById("ed_email").value||"").trim();
+  if(!name){ alert("Name can't be empty."); return; }
+  l.name=name; l.phone=phone; l.email=email;
+  await saveLeads(); openLead(id); render();
 }
 // Admin-only: delete a single note by its original index.
 async function deleteNote(id, idx){
