@@ -103,7 +103,9 @@ create trigger on_auth_user_created
 create or replace function public.protect_profile_fields() returns trigger
   language plpgsql security definer set search_path = public as $$
 begin
-  if not public.is_owner() then
+  -- block privileged-field changes by signed-in non-owners; trusted admin
+  -- updates (SQL editor / service role, where auth.uid() is null) are allowed.
+  if auth.uid() is not null and not public.is_owner() then
     new.role   := old.role;
     new.status := old.status;
     new.team   := old.team;
