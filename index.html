@@ -218,11 +218,12 @@ function rowFromDeal(d){
 }
 function profileFromRow(p){ return {id:p.id, name:p.name||"", email:p.email||"", team:p.team||"Unassigned", upline:p.upline||"Owner", role:p.role||"agent", status:p.status||"pending"}; }
 
-async function saveLead(l){ const {error}=await SB.from("leads").upsert(rowFromLead(l)); if(error) console.warn("saveLead",error.message); }
-async function deleteLead(id){ const {error}=await SB.from("leads").delete().eq("id",id); if(error) console.warn("deleteLead",error.message); }
-async function insertLeads(arr){ const rows=arr.map(rowFromLead).map(r=>{ delete r.id; return r; }); const {error}=await SB.from("leads").insert(rows); if(error){ console.warn("insertLeads",error.message); alert("Import error: "+error.message); } }
-async function saveDeal(d){ const {data,error}=await SB.from("deals").upsert(rowFromDeal(d)).select(); if(error){ console.warn("saveDeal",error.message); } else if(data&&data[0]) d.id=data[0].id; }
-async function saveProfile(a){ const {error}=await SB.from("profiles").update({name:a.name,team:a.team,upline:a.upline,role:a.role,status:a.status}).eq("id",a.id); if(error) console.warn("saveProfile",error.message); }
+function dbErr(where, error){ console.warn(where, error.message); alert("Couldn't save ("+where+"): "+error.message+"\n\nNothing was saved — try Refresh and again."); }
+async function saveLead(l){ const {error}=await SB.from("leads").upsert(rowFromLead(l)); if(error) dbErr("saveLead",error); }
+async function deleteLead(id){ const {error}=await SB.from("leads").delete().eq("id",id); if(error) dbErr("deleteLead",error); }
+async function insertLeads(arr){ const rows=arr.map(rowFromLead).map(r=>{ delete r.id; return r; }); const {error}=await SB.from("leads").insert(rows); if(error) dbErr("import",error); }
+async function saveDeal(d){ const {data,error}=await SB.from("deals").upsert(rowFromDeal(d)).select(); if(error){ dbErr("saveDeal",error); } else if(data&&data[0]) d.id=data[0].id; }
+async function saveProfile(a){ const {error}=await SB.from("profiles").update({name:a.name,team:a.team,upline:a.upline,role:a.role,status:a.status}).eq("id",a.id); if(error) dbErr("saveProfile",error); return !error; }
 async function deleteProfile(id){ const {error}=await SB.from("profiles").delete().eq("id",id); if(error) console.warn("deleteProfile",error.message); }
 
 /* ---------- load everything from Supabase ---------- */
@@ -331,7 +332,7 @@ async function changePw(){
 /* ---------- helpers ---------- */
 const agentById = id => S.agents.find(a=>a.id===id);
 const meName = () => { const a=agentById(S.me); return a?a.name:"—"; };
-const isOwner = () => { const a=agentById(S.me); return !!(a&&a.role==="owner"); };
+const isOwner = () => { const a=agentById(S.me); return !!(a&&a.role==="owner"&&(a.status==="active"||!a.status)); };
 function setCPL(v){ S.cpl=Number(v)||0; render(); }
 const meObj  = () => agentById(S.me) || {name:"—",team:"—",upline:"—"};
 function withinDays(dateStr, days){
@@ -447,7 +448,7 @@ function renderDash(){
   <div class="panel">
     <h2>Top Closers <span class="sub">this week's standings</span></h2>
     ${board.length? `<table><thead><tr><th>#</th><th>Agent</th><th>Team</th><th>Deals</th><th>AP</th></tr></thead><tbody>
-      ${board.map((r,i)=>`<tr><td><span class="rank r${i+1}">${i+1}</span></td><td><b>${r.key}</b></td><td>${r.team||'—'}</td><td>${r.count}</td><td><b>${MONEY(r.ap)}</b></td></tr>`).join("")}
+      ${board.map((r,i)=>`<tr><td><span class="rank r${i+1}">${i+1}</span></td><td><b>${escapeHtml(r.key)}</b></td><td>${r.team||'—'}</td><td>${r.count}</td><td><b>${MONEY(r.ap)}</b></td></tr>`).join("")}
     </tbody></table>` : `<div class="empty">No deals yet — be the first on the board.</div>`}
   </div>
   <div class="panel">
@@ -495,8 +496,8 @@ function renderPool(){
         <th style="cursor:pointer;user-select:none" onclick="setPoolSort('appt')">Appointment${sortArrow('appt')}</th>
         <th>Connected by</th><th></th></tr></thead><tbody>
       ${leads.map(l=>`<tr>
-        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${l.name}</b></a>${cbBadge(l)}<div class="muted">${l.phone}</div></td>
-        <td>${l.state}</td><td>${l.age}</td>
+        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${escapeHtml(l.name)}</b></a>${cbBadge(l)}<div class="muted">${escapeHtml(l.phone)}</div></td>
+        <td>${escapeHtml(l.state)}</td><td>${l.age}</td>
         <td><span class="tag t-${l.status}">${l.status}</span></td>
         <td>${apptCell(l)}</td>
         <td>${touchersCell(l)}</td>
@@ -556,7 +557,7 @@ function renderMine(){
         const age=leadAgeDays(l, meName());
         const stale= age>STALE_DAYS? ` <span class="tag" style="background:var(--red)">${age}d — stale</span>` : (age>=STALE_DAYS-1? ` <span class="muted" style="font-size:10px">${age}d</span>`:"");
         return `<tr>
-        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${l.name}</b></a>${cbBadge(l)}${stale}<div class="muted">${l.phone}</div></td>
+        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${escapeHtml(l.name)}</b></a>${cbBadge(l)}${stale}<div class="muted">${escapeHtml(l.phone)}</div></td>
         <td>${l.state}</td><td>${l.times_worked}×</td><td>${fu}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn s sm" onclick="openLead('${l.id}')">Open</button>
@@ -598,7 +599,7 @@ function renderBoard(){
     ${rows.length? `<table><thead><tr><th>#</th><th>${mode==='agent'?'Agent':mode==='team'?'Team':'Upline'}</th>${mode==='agent'?'<th>Team</th>':''}<th>Deals</th><th>Annual AP</th><th>Avg AP</th></tr></thead><tbody>
       ${rows.map((r,i)=>`<tr>
         <td><span class="rank r${i+1}">${i+1}</span></td>
-        <td><b>${r.key}</b></td>
+        <td><b>${escapeHtml(r.key)}</b></td>
         ${mode==='agent'?`<td><span class="pill">${r.team||'—'}</span></td>`:''}
         <td>${r.count}</td><td><b style="color:var(--accent)">${MONEY(r.ap)}</b></td>
         <td class="muted">${MONEY(Math.round(r.ap/r.count))}</td>
@@ -651,7 +652,7 @@ function renderCommand(){
   <div class="panel">
     <h2>Agent Performance</h2>
     ${agg.length?`<table><thead><tr><th>#</th><th>Agent</th><th>Team</th><th>Deals</th><th>AP</th></tr></thead><tbody>
-      ${agg.map((r,i)=>`<tr><td><span class="rank r${i+1}">${i+1}</span></td><td><b>${r.key}</b></td><td><span class="pill">${r.team||'—'}</span></td><td>${r.count}</td><td><b>${MONEY(r.ap)}</b></td></tr>`).join("")}
+      ${agg.map((r,i)=>`<tr><td><span class="rank r${i+1}">${i+1}</span></td><td><b>${escapeHtml(r.key)}</b></td><td><span class="pill">${r.team||'—'}</span></td><td>${r.count}</td><td><b>${MONEY(r.ap)}</b></td></tr>`).join("")}
     </tbody></table>`:`<div class="empty">No deals yet.</div>`}
   </div>
   <div class="panel">
@@ -705,7 +706,7 @@ function renderAdmin(){
   <div class="panel">
     <h2>Chargebacks <span class="sub">reopen a closed deal — lead goes back to the pool, history kept</span></h2>
     ${closedDeals.length? `<table><thead><tr><th>Client</th><th>Closed by</th><th>Carrier</th><th>AP</th><th></th></tr></thead><tbody>
-      ${closedDeals.map(d=>`<tr><td><b>${d.lead_name}</b></td><td>${d.closed_by}</td><td class="muted">${d.carrier.split(" (")[0]}</td><td>${MONEY(d.annual_ap)}</td>
+      ${closedDeals.map(d=>`<tr><td><b>${escapeHtml(d.lead_name)}</b></td><td>${escapeHtml(d.closed_by)}</td><td class="muted">${escapeHtml(String(d.carrier||'').split(" (")[0])}</td><td>${MONEY(d.annual_ap)}</td>
         <td style="text-align:right"><button class="btn d sm" onclick="chargeback('${d.id}')">Mark Chargeback</button></td></tr>`).join("")}
     </tbody></table>`:`<div class="empty">No active deals to reopen.</div>`}
   </div>
@@ -732,6 +733,7 @@ function renderAdmin(){
 // has connected (touched_by) and who called last.
 async function markCalled(id){
   const l=S.leads.find(x=>x.id===id); if(!l) return;
+  if(!agentById(S.me)){ alert("Your profile isn't loaded — click ↻ Refresh, then try again."); return; }
   l.times_worked=(l.times_worked||0)+1;
   l.last_called_by=meName(); l.last_called_date=today();
   if(!l.touched_by) l.touched_by=[];
@@ -780,7 +782,8 @@ function closeModal(){ document.getElementById("modalRoot").innerHTML=""; render
 
 async function confirmClose(id){
   const l=S.leads.find(x=>x.id===id); if(!l) return;
-  const m=meObj();
+  const m=agentById(S.me);
+  if(!m){ alert("Your profile isn't loaded — click ↻ Refresh, then try again."); return; }
   const g=i=>document.getElementById(i).value;
   const ap=Number(g("cf_ap")||0);
   if(!ap){ alert("Enter the annual AP."); return; }
@@ -1123,20 +1126,22 @@ async function removeAgent(id){
   if(!confirm("Remove "+a.name+"? This deletes their profile (their login stays in Supabase Auth until you delete it there).")) return;
   await deleteProfile(id); S.agents=S.agents.filter(x=>x.id!==id); render();
 }
-// Admin: assign an agent to a team and/or upline (e.g. after approving them).
+// Admin: assign an agent to a team/upline. This ALSO grants access (sets
+// status active) so "assigning" someone onboards them in one step.
 function openAgentEdit(id){
   if(!isOwner()) return;
   const a=agentById(id); if(!a) return;
   const uplines=["Owner"].concat(S.agents.filter(x=>x.id!==id && x.role!=="owner").map(x=>x.name));
+  const pending=a.status!=="active";
   document.getElementById("modalRoot").innerHTML=`
   <div class="modal-bg" onclick="if(event.target===this)closeModal()">
    <div class="modal" style="max-width:420px">
      <h3>Assign ${escapeHtml(a.name)}</h3>
-     <div class="ms">Set this agent's team and who they report to.</div>
+     <div class="ms">Set their team and upline.${pending?' This also <b>approves</b> their account so they can log in.':''}</div>
      <div class="field"><label>Team</label><input id="ag_team" value="${escapeHtml(a.team||'')}" placeholder="Alpha / Bravo…"></div>
      <div class="field"><label>Upline (their recruiter / manager)</label>
        <select id="ag_upline">${uplines.map(u=>`<option ${u===a.upline?'selected':''}>${escapeHtml(u)}</option>`).join("")}</select></div>
-     <div class="mfoot"><button class="btn s" onclick="closeModal()">Cancel</button><button class="btn p" onclick="saveAgentEdit('${a.id}')">Save</button></div>
+     <div class="mfoot"><button class="btn s" onclick="closeModal()">Cancel</button><button class="btn p" onclick="saveAgentEdit('${a.id}')">${pending?'Approve &amp; Save':'Save'}</button></div>
    </div>
   </div>`;
 }
@@ -1145,7 +1150,9 @@ async function saveAgentEdit(id){
   const a=agentById(id); if(!a) return;
   a.team=(document.getElementById("ag_team").value||"").trim()||"Unassigned";
   a.upline=document.getElementById("ag_upline").value;
-  await saveProfile(a); closeModal(); render();
+  if(a.status!=="active") a.status="active";   // assigning a team onboards them
+  const ok=await saveProfile(a);
+  if(ok){ closeModal(); render(); alert(a.name+" is set up — team "+a.team+", and they can log in now."); }
 }
 // Owner only: clear all leads & deals (does not touch agent logins).
 async function wipe(){
@@ -1425,6 +1432,7 @@ async function deleteNote(id, idx){
 }
 async function logCall(id){
   const l=S.leads.find(x=>x.id===id); if(!l) return;
+  if(!agentById(S.me)){ alert("Your profile isn't loaded — click ↻ Refresh, then try again."); return; }
   l.times_worked=(l.times_worked||0)+1; l.last_called_by=meName(); l.last_called_date=today();
   if(!l.touched_by) l.touched_by=[]; if(!l.touched_by.includes(meName())) l.touched_by.push(meName());
   const box=document.getElementById("noteBox"); const txt=(box.value||"").trim();
