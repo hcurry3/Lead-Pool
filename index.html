@@ -185,6 +185,7 @@ const DISPOSITIONS = ["No answer","Voicemail","Callback","Not interested","Wrong
 const meNameById = id => { const a=S.agents.find(x=>x.id===id); return a?a.name:""; };
 function leadFromRow(r){
   return { id:r.id, name:r.name||"", phone:r.phone||"", email:r.email||"", dob:r.dob||"", gender:r.gender||"",
+    address:r.address||"", city:r.city||"", zip:r.zip||"",
     state:r.state||"", age:r.age||0, status:r.status||"available", dnc:!!r.dnc, chargebackClient:!!r.chargeback_client,
     imported_by:r.imported_by||"", imported_at:r.imported_at||null, import_batch:r.import_batch||"",
     current_owner:r.current_owner||null, times_worked:r.times_worked||0,
@@ -194,6 +195,7 @@ function leadFromRow(r){
 }
 function rowFromLead(l){
   const r={ name:l.name||"", phone:l.phone||"", email:l.email||"", dob:l.dob||"", gender:l.gender||"",
+    address:l.address||"", city:l.city||"", zip:l.zip||"",
     state:l.state||"", age:Number(l.age||0), status:l.status||"available", dnc:!!l.dnc, chargeback_client:!!l.chargebackClient,
     imported_by:l.imported_by||"", imported_at:l.imported_at||null, import_batch:l.import_batch||"",
     current_owner:l.current_owner||null, current_owner_name:l.current_owner?meNameById(l.current_owner):"",
@@ -831,6 +833,7 @@ async function doImport(){
     if(isExistingLead(l) || (ph.length>=7 && seenPh.has(ph)) || (em && seenEm.has(em))){ dupes++; return; }
     if(ph.length>=7) seenPh.add(ph); if(em) seenEm.add(em);
     toAdd.push({name:l.name, phone:l.phone||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0), email:l.email||"", dob:l.dob||"", gender:l.gender||"",
+      address:l.address||"", city:l.city||"", zip:l.zip||"",
       imported_by:by, import_batch:"import-"+today(), imported_at:today(), status:"available", current_owner:null,
       touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
     added++;
@@ -913,12 +916,15 @@ function isHeaderRow(cells){
 // Map header labels to column indices (used when a header row is present).
 // Handles "F Name"/"L Name", "First Name"/"Last Name", DOB, Gender, etc.
 function mapColumns(headerRow){
-  const idx={name:-1,first:-1,last:-1,phone:-1,state:-1,age:-1,email:-1,dob:-1,gender:-1};
+  const idx={name:-1,first:-1,last:-1,phone:-1,state:-1,age:-1,email:-1,dob:-1,gender:-1,address:-1,city:-1,zip:-1};
   (headerRow||[]).forEach((h,i)=>{
     const k=String(h==null?"":h).toLowerCase().trim();
     if(idx.email<0 && /e-?mail/.test(k)) idx.email=i;
     else if(idx.gender<0 && /(gender|sex)/.test(k)) idx.gender=i;
     else if(idx.dob<0 && /(^dob$|date of birth|birth ?date|birthday|\bdob\b)/.test(k)) idx.dob=i;
+    else if(idx.zip<0 && /(zip|postal)/.test(k)) idx.zip=i;
+    else if(idx.city<0 && /(^city$|town)/.test(k)) idx.city=i;
+    else if(idx.address<0 && /(^address|street|addr)/.test(k)) idx.address=i;
     else if(idx.first<0 && /^(first|fname|f[\s._-]*name|given)/.test(k)) idx.first=i;
     else if(idx.last<0 && /^(last|lname|l[\s._-]*name|surname|family)/.test(k)) idx.last=i;
     else if(idx.name<0 && /(^name$|full ?name|lead ?name|client|contact)/.test(k)) idx.name=i;
@@ -946,7 +952,10 @@ function leadFromHeader(cells, idx){
     age,
     email: isEmail(get(idx.email))? get(idx.email).toLowerCase() : get(idx.email),
     dob: dob||"",
-    gender: genderOf(get(idx.gender)) || get(idx.gender) || ""
+    gender: genderOf(get(idx.gender)) || get(idx.gender) || "",
+    address: get(idx.address),
+    city: get(idx.city),
+    zip: get(idx.zip)
   };
 }
 
@@ -1075,6 +1084,7 @@ async function commitImport(){
     if(isExistingLead(l) || (ph.length>=7 && seenPh.has(ph)) || (em && seenEm.has(em))){ dupes++; return; }
     if(ph.length>=7) seenPh.add(ph); if(em) seenEm.add(em);
     toAdd.push({name:l.name, phone:l.phone||"", email:l.email||"", dob:l.dob||"", gender:l.gender||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0),
+      address:l.address||"", city:l.city||"", zip:l.zip||"",
       imported_by:by, import_batch:"file-"+today(), imported_at:today(), status:"available", current_owner:null,
       touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
     added++;
@@ -1350,7 +1360,8 @@ function openLead(id){
    <div class="modal" style="max-width:560px">
      <h3>${escapeHtml(l.name)}</h3>
      <div class="ms">${escapeHtml(l.phone||'—')}${l.email?' · ✉ '+escapeHtml(l.email):''} · ${escapeHtml(l.state||'')} · age ${l.age||'—'}${l.gender?' · '+escapeHtml(l.gender):''}${l.dob?' · DOB '+escapeHtml(fmtDob(l.dob)):''} · <span class="tag t-${l.status}">${l.status}</span>${cbBadge(l)}${l.dnc?' <span class="tag" style="background:var(--red)">⛔ DNC</span>':''}${l.last_disposition?' <span class="pill">'+escapeHtml(l.last_disposition)+'</span>':''}</div>
-     <div class="muted" style="font-size:11px;margin:-8px 0 10px">⬆ Imported by <b>${escapeHtml(l.imported_by||'—')}</b>${l.imported_at?' · '+fmtDate(l.imported_at):''}</div>
+     ${(()=>{const a=[l.address,l.city,[l.state,l.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');return a?`<div class="ms" style="margin:-8px 0 8px">📍 ${escapeHtml(a)}</div>`:'';})()}
+     <div class="muted" style="font-size:11px;margin:-4px 0 10px">⬆ Imported by <b>${escapeHtml(l.imported_by||'—')}</b>${l.imported_at?' · '+fmtDate(l.imported_at):''}</div>
      <div style="margin:-6px 0 12px">
        ${l.chargebackClient?'<span class="muted" style="font-size:11px">Flagged as a former client who charged back.</span>':'<span class="muted" style="font-size:11px">Not flagged as a charged-back client.</span>'}
        ${canEdit?`<button class="btn s sm" style="margin-left:8px" onclick="toggleChargebackClient('${l.id}')">${l.chargebackClient?'Remove charge-back flag':'⚡ Mark charged-back client'}</button>`:''}
