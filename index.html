@@ -766,51 +766,70 @@ const COMM=[
 ];
 function commRate(carrier,product,level){ const p=COMM.find(x=>x.carrier===carrier&&x.product===product); if(!p) return null; const r=p.rates[LEVELS.indexOf(level)]; return (r==null)?null:r; }
 function setComm(field,val){ S[field]= field==="commLevel"?Number(val):val; if(field==="commCarrier"){ const ps=COMM.filter(x=>x.carrier===val); S.commProduct=ps[0]?ps[0].product:""; } render(); }
-function setCommMonthly(v){ S.commMonthly=v; render(); const el=document.getElementById("commMonthly"); if(el){ el.focus(); try{ el.setSelectionRange(el.value.length,el.value.length); }catch(e){} } }
-function renderCommission(){
+function setCommMode(m){ S.commMode=m; render(); }
+function onCommInput(v){ S.commMonthly=v; updateCommOut(); }   // no full render → cursor stays put
+function commCalc(){
   const level=S.commLevel||100;
-  const monthly=parseFloat(S.commMonthly)||0;
-  const ap=Math.round(monthly*12*100)/100;
+  const amt=parseFloat(S.commMonthly)||0;
+  const ap=Math.round((S.commMode==="annual"?amt:amt*12)*100)/100;
   const carriers=[...new Set(COMM.map(x=>x.carrier))];
   const carrier=COMM.some(x=>x.carrier===S.commCarrier)? S.commCarrier : carriers[0];
   const prods=COMM.filter(x=>x.carrier===carrier);
   const product=(prods.find(p=>p.product===S.commProduct)? S.commProduct : (prods[0]&&prods[0].product));
   const r=commRate(carrier,product,level);
   const pay=(r!=null)? ap*r/100 : null;
+  return {level,amt,ap,carriers,carrier,prods,product,r,pay};
+}
+function commResultHtml(){
+  const {level,ap,carrier,product,r,pay}=commCalc();
+  if(pay==null) return `<div style="font-size:12px;color:#cdb88a;font-weight:700;text-transform:uppercase">Commission</div><div style="font-size:22px;font-weight:800;margin-top:6px">Not offered at level ${level}</div>`;
+  const m2=n=>"$"+(Number(n)||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); const adv=pay*0.75, mo=pay/12;
+  return `<div style="font-size:12px;color:#cdb88a;font-weight:700;letter-spacing:.5px;text-transform:uppercase">Annual Commission</div>
+    <div style="font-size:32px;font-weight:800;margin:2px 0">${m2(pay)}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+      <div style="background:rgba(255,255,255,.10);border-radius:8px;padding:9px 11px"><div style="color:#cdb88a;font-size:11px;font-weight:700">9‑MONTH ADVANCE (75%)</div><div style="font-weight:800;font-size:22px">${m2(adv)}</div></div>
+      <div style="background:rgba(255,255,255,.06);border-radius:8px;padding:9px 11px"><div style="color:#aeb4c5;font-size:11px">Comp rate</div><div style="font-weight:800;font-size:22px">${r}%</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
+      ${[10,11,12].map(mn=>`<div style="background:rgba(255,255,255,.06);border-radius:8px;padding:7px 9px;text-align:center"><div style="color:#aeb4c5;font-size:10px">Month ${mn}</div><div style="font-weight:700;font-size:14px">${m2(mo)}</div></div>`).join("")}
+    </div>
+    <div style="font-size:11px;color:#aeb4c5;margin-top:10px">${escapeHtml(carrier)} · ${escapeHtml(product)} · FFL ${level} · ${MONEY(ap)} × ${r}%</div>`;
+}
+function commTopHtml(){
+  const {level,ap}=commCalc();
   const all=COMM.map(x=>{const rr=x.rates[LEVELS.indexOf(level)]; return {c:x.carrier,p:x.product,r:rr,pay:rr!=null?ap*rr/100:null};}).filter(x=>x.pay!=null).sort((a,b)=>b.pay-a.pay);
+  return `<h2>Top Payouts <span class="sub">${MONEY(ap)} AP at level ${level} — where this premium pays most</span></h2>
+    ${ap>0? `<table><thead><tr><th>#</th><th>Carrier</th><th>Product</th><th>Rate</th><th>Year-1</th></tr></thead><tbody>
+      ${all.slice(0,20).map((x,i)=>`<tr><td>${i+1}</td><td><b>${escapeHtml(x.c)}</b></td><td>${escapeHtml(x.p)}</td><td class="muted">${x.r}%</td><td><b style="color:var(--accent)">${MONEY(Math.round(x.pay))}</b></td></tr>`).join("")}
+    </tbody></table>` : `<div class="empty">Enter a premium above to compare payouts across all carriers.</div>`}`;
+}
+function updateCommOut(){
+  const a=document.getElementById("commResult"); if(a) a.innerHTML=commResultHtml();
+  const b=document.getElementById("commTopPanel"); if(b) b.innerHTML=commTopHtml();
+  const apf=document.getElementById("commApField"); if(apf) apf.value=MONEY(commCalc().ap);
+}
+function renderCommission(){
+  const {level,ap,carriers,carrier,prods,product}=commCalc();
+  const mode=S.commMode==="annual"?"annual":"monthly";
   return `
   <div class="panel">
     <h2>Commission Calculator <span class="sub">your Year-1 payout when you sell a policy</span></h2>
     <div class="grid2">
       <div class="field"><label>Your FFL contract level</label><select onchange="setComm('commLevel',this.value)">${LEVELS.map(l=>`<option value="${l}" ${l===level?'selected':''}>${l}</option>`).join("")}</select></div>
-      <div class="field"><label>Monthly premium ($)</label><input id="commMonthly" type="number" value="${escapeHtml(String(S.commMonthly||''))}" oninput="setCommMonthly(this.value)" placeholder="e.g. 95"></div>
+      <div class="field"><label>Premium type</label><select onchange="setCommMode(this.value)"><option value="monthly" ${mode==="monthly"?'selected':''}>Monthly</option><option value="annual" ${mode==="annual"?'selected':''}>Annual</option></select></div>
     </div>
-    <div class="muted" style="font-size:12px;margin-bottom:10px">Annual premium (AP): <b>${MONEY(ap)}</b> &nbsp;·&nbsp; commission = AP × your rate. Year-1 estimate — verify against your official FFL comp guide.</div>
+    <div class="grid2">
+      <div class="field"><label>${mode==="annual"?"Annual":"Monthly"} premium ($)</label><input id="commMonthly" type="number" inputmode="decimal" value="${escapeHtml(String(S.commMonthly||''))}" oninput="onCommInput(this.value)" placeholder="${mode==="annual"?'e.g. 1140':'e.g. 95'}"></div>
+      <div class="field"><label>Annual premium (AP)</label><input type="text" disabled style="font-weight:700" id="commApField" value="${MONEY(ap)}"></div>
+    </div>
+    <div class="muted" style="font-size:12px;margin-bottom:10px"><span id="commAp" style="display:none">${MONEY(ap)}</span>Annualized = monthly × 12 &nbsp;·&nbsp; commission = AP × your rate. Year-1 estimate — verify against your official FFL comp guide.</div>
     <div class="grid2">
       <div class="field"><label>Carrier</label><select onchange="setComm('commCarrier',this.value)">${carriers.map(c=>`<option ${c===carrier?'selected':''}>${escapeHtml(c)}</option>`).join("")}</select></div>
       <div class="field"><label>Product</label><select onchange="setComm('commProduct',this.value)">${prods.map(p=>`<option ${p.product===product?'selected':''}>${escapeHtml(p.product)}</option>`).join("")}</select></div>
     </div>
-    <div style="background:linear-gradient(120deg,var(--ink),var(--ink2));color:#fff;border-radius:14px;padding:18px 20px;margin-top:4px">
-      ${pay!=null? (()=>{ const m2=n=>"$"+(Number(n)||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); const adv=pay*0.75, mo=pay/12;
-        return `<div style="font-size:12px;color:#cdb88a;font-weight:700;letter-spacing:.5px;text-transform:uppercase">Annual Commission</div>
-        <div style="font-size:32px;font-weight:800;margin:2px 0">${m2(pay)}</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
-          <div style="background:rgba(255,255,255,.10);border-radius:8px;padding:9px 11px"><div style="color:#cdb88a;font-size:11px;font-weight:700">9‑MONTH ADVANCE (75%)</div><div style="font-weight:800;font-size:22px">${m2(adv)}</div></div>
-          <div style="background:rgba(255,255,255,.06);border-radius:8px;padding:9px 11px"><div style="color:#aeb4c5;font-size:11px">Comp rate</div><div style="font-weight:800;font-size:22px">${r}%</div></div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
-          ${[10,11,12].map(mn=>`<div style="background:rgba(255,255,255,.06);border-radius:8px;padding:7px 9px;text-align:center"><div style="color:#aeb4c5;font-size:10px">Month ${mn}</div><div style="font-weight:700;font-size:14px">${m2(mo)}</div></div>`).join("")}
-        </div>
-        <div style="font-size:11px;color:#aeb4c5;margin-top:10px">${escapeHtml(carrier)} · ${escapeHtml(product)} · FFL ${level} · ${MONEY(ap)} × ${r}%</div>`; })()
-      : `<div style="font-size:12px;color:#cdb88a;font-weight:700;text-transform:uppercase">Commission</div><div style="font-size:22px;font-weight:800;margin-top:6px">Not offered at level ${level}</div>`}
-    </div>
+    <div id="commResult" style="background:linear-gradient(120deg,var(--ink),var(--ink2));color:#fff;border-radius:14px;padding:18px 20px;margin-top:4px">${commResultHtml()}</div>
   </div>
-  <div class="panel">
-    <h2>Top Payouts <span class="sub">${MONEY(ap)} AP at level ${level} — where this premium pays most</span></h2>
-    ${ap>0? `<table><thead><tr><th>#</th><th>Carrier</th><th>Product</th><th>Rate</th><th>Year-1</th></tr></thead><tbody>
-      ${all.slice(0,20).map((x,i)=>`<tr><td>${i+1}</td><td><b>${escapeHtml(x.c)}</b></td><td>${escapeHtml(x.p)}</td><td class="muted">${x.r}%</td><td><b style="color:var(--accent)">${MONEY(Math.round(x.pay))}</b></td></tr>`).join("")}
-    </tbody></table>` : `<div class="empty">Enter a monthly premium above to compare payouts across all carriers.</div>`}
-  </div>`;
+  <div class="panel" id="commTopPanel">${commTopHtml()}</div>`;
 }
 
 /* ---------- DASHBOARD ---------- */
