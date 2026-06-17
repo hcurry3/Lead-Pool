@@ -868,6 +868,7 @@ function genderOf(c){ const s=String(c==null?"":c).trim().toLowerCase(); if(/^(m
 function normalizeDob(v){
   const s=String(v==null?"":v).trim();
   if(!s) return "";
+  if(/^#+$/.test(s) || /^n\/?a$/i.test(s)) return "";   // Excel "####" or "N/A"
   if(/^\d{4,5}$/.test(s)){ const n=+s; if(n>=1000 && n<=80000){ const d=new Date(Date.UTC(1899,11,30)+n*86400000); if(!isNaN(d.getTime())) return d.toISOString().slice(0,10); } }
   return s;
 }
