@@ -191,7 +191,7 @@ function leadFromRow(r){
     current_owner:r.current_owner||null, times_worked:r.times_worked||0,
     last_called_by:r.last_called_by||null, last_called_date:r.last_called_date||null, last_disposition:r.last_disposition||"",
     followup_date:r.followup_date||null, followup_time:r.followup_time||"", followup_kind:r.followup_kind||null, followup_set_by:r.followup_set_by||null,
-    touched_by:r.touched_by||[], dismissed_by:r.dismissed_by||[], notes:r.notes||[] };
+    touched_by:r.touched_by||[], dismissed_by:r.dismissed_by||[], notes:r.notes||[], created_at:r.created_at||null };
 }
 function rowFromLead(l){
   const r={ name:l.name||"", phone:l.phone||"", email:l.email||"", dob:l.dob||"", gender:l.gender||"",
@@ -714,6 +714,18 @@ function renderAdmin(){
   </div>
 
   <div class="panel">
+    <h2>Lead Uploads <span class="sub">delete an entire upload in one click</span></h2>
+    ${uploadBatches().length? `<table><thead><tr><th>Imported by</th><th>When</th><th>Leads</th><th></th></tr></thead><tbody>
+      ${uploadBatches().map(u=>`<tr>
+        <td><b>${escapeHtml(u.by)}</b></td>
+        <td class="muted">${u.when?fmtWhen(u.when):'—'}</td>
+        <td>${u.count}</td>
+        <td style="text-align:right"><button class="btn d sm" onclick="deleteBatch('${u.batch}')">Delete upload</button></td>
+      </tr>`).join("")}
+    </tbody></table>` : `<div class="empty">No uploads yet.</div>`}
+  </div>
+
+  <div class="panel">
     <h2>Chargebacks <span class="sub">reopen a closed deal — lead goes back to the pool, history kept</span></h2>
     ${closedDeals.length? `<table><thead><tr><th>Client</th><th>Closed by</th><th>Carrier</th><th>AP</th><th></th></tr></thead><tbody>
       ${closedDeals.map(d=>`<tr><td><b>${escapeHtml(d.lead_name)}</b></td><td>${escapeHtml(d.closed_by)}</td><td class="muted">${escapeHtml(String(d.carrier||'').split(" (")[0])}</td><td>${MONEY(d.annual_ap)}</td>
@@ -820,6 +832,7 @@ async function del(id){ await deleteLead(id); S.leads=S.leads.filter(l=>l.id!==i
 async function doImport(){
   const raw=document.getElementById("impBox").value.trim();
   const by=document.getElementById("impBy").value;
+  const batch="up-"+Date.now().toString(36);   // unique id for this upload
   if(!raw){ alert("Paste at least one lead."); return; }
   let added=0, skipped=0, dupes=0; const toAdd=[];
   const seenPh=new Set(), seenEm=new Set();
@@ -834,7 +847,7 @@ async function doImport(){
     if(ph.length>=7) seenPh.add(ph); if(em) seenEm.add(em);
     toAdd.push({name:l.name, phone:l.phone||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0), email:l.email||"", dob:l.dob||"", gender:l.gender||"",
       address:l.address||"", city:l.city||"", zip:l.zip||"",
-      imported_by:by, import_batch:"import-"+today(), imported_at:today(), status:"available", current_owner:null,
+      imported_by:by, import_batch:batch, imported_at:today(), status:"available", current_owner:null,
       touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
     added++;
   });
@@ -1077,6 +1090,7 @@ async function commitImport(){
   if(!pendingImport.length) return;
   const sel=document.getElementById("impBy");
   const by= sel? sel.value : meName();
+  const batch="up-"+Date.now().toString(36);   // unique id for this upload
   let added=0, dupes=0; const toAdd=[];
   const seenPh=new Set(), seenEm=new Set();
   pendingImport.forEach(l=>{
@@ -1086,7 +1100,7 @@ async function commitImport(){
     if(ph.length>=7) seenPh.add(ph); if(em) seenEm.add(em);
     toAdd.push({name:l.name, phone:l.phone||"", email:l.email||"", dob:l.dob||"", gender:l.gender||"", state:(l.state||"").toUpperCase(), age:Number(l.age||0),
       address:l.address||"", city:l.city||"", zip:l.zip||"",
-      imported_by:by, import_batch:"file-"+today(), imported_at:today(), status:"available", current_owner:null,
+      imported_by:by, import_batch:batch, imported_at:today(), status:"available", current_owner:null,
       touched_by:[], times_worked:0, last_called_by:null, last_called_date:null});
     added++;
   });
@@ -1195,6 +1209,24 @@ async function wipe(){
   await SB.from("deals").delete().neq("id","00000000-0000-0000-0000-000000000000");
   await SB.from("leads").delete().neq("id","00000000-0000-0000-0000-000000000000");
   await loadAll(); render(); alert("All leads and deals cleared.");
+}
+// Group leads by the upload they came in on (newest first).
+function uploadBatches(){
+  const m={};
+  S.leads.forEach(l=>{ const b=l.import_batch||"(unknown)";
+    if(!m[b]) m[b]={batch:b, count:0, by:l.imported_by||"—", when:l.created_at||l.imported_at||""};
+    m[b].count++;
+    if(l.created_at && (!m[b].when || l.created_at<m[b].when)) m[b].when=l.created_at;
+  });
+  return Object.values(m).sort((a,b)=> String(b.when).localeCompare(String(a.when)));
+}
+async function deleteBatch(batch){
+  if(!isOwner()){ alert("Admins only."); return; }
+  const grp=uploadBatches().find(x=>x.batch===batch); const n=grp?grp.count:0;
+  if(!confirm("Delete all "+n+" lead"+(n===1?"":"s")+" from this upload? This can't be undone.")) return;
+  const {error}=await SB.from("leads").delete().eq("import_batch",batch);
+  if(error){ dbErr("deleteBatch",error); return; }
+  await loadAll(); render(); alert("Deleted "+n+" lead"+(n===1?"":"s")+".");
 }
 
 /* ---------- follow-ups & notes ---------- */
