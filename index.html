@@ -138,7 +138,7 @@
   <div class="main">
     <div class="top">
       <h1 id="ptitle">Dashboard</h1>
-      <span id="dialBadge" title="Your dials today (counts each time you hit Called)" style="background:var(--accent);color:#fff;font-weight:700;font-size:12px;padding:5px 10px;border-radius:20px"></span>
+      <span id="dialBadge" onclick="openDials()" title="Click to see who you've dialed" style="background:var(--accent);color:#fff;font-weight:700;font-size:12px;padding:5px 10px;border-radius:20px;cursor:pointer"></span>
       <div class="who">
         <span>Signed in as</span>
         <b id="meName" style="color:var(--ink)"></b>
@@ -612,6 +612,27 @@ function dialCount(agentName, sinceMs){
   return n;
 }
 const myDials = sinceMs => dialCount(meName(), sinceMs);
+// Tap the dial badge → see who you've dialed (newest first).
+function openDials(){
+  const me=meName(); const calls=[];
+  S.leads.forEach(l=>(l.notes||[]).forEach(n=>{ if(n.agent===me && (n.call || /📞/.test(n.text||""))) calls.push({id:l.id, name:l.name, phone:l.phone, ts:n.ts, dispo:n.disposition||""}); }));
+  calls.sort((a,b)=> a.ts<b.ts?1:-1);
+  document.getElementById("modalRoot").innerHTML=`
+  <div class="modal-bg" onclick="if(event.target===this)closeModal()">
+   <div class="modal" style="max-width:540px">
+     <h3>📞 Your Dials</h3>
+     <div class="ms">${dialCount(me,startOfTodayMs())} today · ${dialCount(me,startOfWeekMs())} this week · ${calls.length} all‑time</div>
+     ${calls.length? `<div style="max-height:60vh;overflow:auto"><table><tbody>
+       ${calls.map(c=>`<tr>
+         <td style="white-space:nowrap;color:var(--muted);font-size:11px;vertical-align:top">${fmtWhen(c.ts)}</td>
+         <td><a href="#" onclick="closeModal();openLead('${c.id}');return false"><b>${escapeHtml(c.name)}</b></a> <span class="muted">${escapeHtml(c.phone||'')}</span></td>
+         <td style="text-align:right">${c.dispo?'<span class="pill">'+escapeHtml(c.dispo)+'</span>':''}</td>
+       </tr>`).join("")}
+     </tbody></table></div>` : `<div class="empty">No dials yet — hit 📞 Called on a lead to start.</div>`}
+     <div class="mfoot"><button class="btn s" onclick="closeModal()">Done</button></div>
+   </div>
+  </div>`;
+}
 
 /* ---------- pipeline staleness / upline alerts ---------- */
 const STALE_DAYS = 5;
