@@ -262,6 +262,84 @@ const UWGRID = [
 {c:"Walker", v:["Within 6 mos - Guaranteed Issue","Not asked","Not asked","Not asked","Not asked","Not asked"]},
 {c:"Wheelchair / Electric Scooter / Cart", v:["Within 6 mos - Guaranteed Issue","Use wheelchair/scooter - DECLINE","Confined or diabetic - DECLINE","Due to illness/disease - DECLINE","Confined or diabetic - DECLINE","Due to illness/disease - DECLINE"]}
 ];
+/* ---------- common Rx → condition map (FE med check) ----------
+   `cond` is matched (substring) against a UWGRID condition so the med links
+   straight to the carrier guidance. Guide only — many drugs have several uses. */
+const MEDS = [
+{name:"Metformin", aka:["glucophage"], treats:"Type 2 diabetes", cond:"Diabetes"},
+{name:"Insulin", aka:["lantus","humalog","novolog","levemir","tresiba","basaglar"], treats:"Diabetes (insulin-dependent)", cond:"Diabetes", note:"Ask if started before/after age 50 — changes the rating"},
+{name:"Jardiance", aka:["empagliflozin"], treats:"Type 2 diabetes", cond:"Diabetes"},
+{name:"Farxiga", aka:["dapagliflozin"], treats:"Type 2 diabetes / heart failure", cond:"Diabetes", note:"Also used for heart failure — ask why"},
+{name:"Ozempic", aka:["semaglutide","wegovy","rybelsus"], treats:"Type 2 diabetes / weight", cond:"Diabetes"},
+{name:"Trulicity", aka:["dulaglutide"], treats:"Type 2 diabetes", cond:"Diabetes"},
+{name:"Glipizide", aka:["glucotrol","glimepiride","glyburide"], treats:"Type 2 diabetes", cond:"Diabetes"},
+{name:"Januvia", aka:["sitagliptin"], treats:"Type 2 diabetes", cond:"Diabetes"},
+{name:"Eliquis", aka:["apixaban"], treats:"Blood thinner — AFib / blood clots", cond:"Atrial Fibrillation", note:"Also check blood clots, stroke, stent"},
+{name:"Xarelto", aka:["rivaroxaban"], treats:"Blood thinner — AFib / blood clots", cond:"Atrial Fibrillation", note:"Also check blood clots, stroke"},
+{name:"Warfarin", aka:["coumadin","jantoven"], treats:"Blood thinner — AFib / clots", cond:"Atrial Fibrillation", note:"Also check blood clots, heart valve, stroke"},
+{name:"Pradaxa", aka:["dabigatran"], treats:"Blood thinner — AFib / clots", cond:"Atrial Fibrillation"},
+{name:"Plavix", aka:["clopidogrel","brilinta","effient"], treats:"Blood thinner — after stent / heart event", cond:"Stent", note:"Usually means a prior stent or heart attack"},
+{name:"Nitroglycerin", aka:["nitrostat","nitro"], treats:"Angina (chest pain)", cond:"Angina"},
+{name:"Metoprolol", aka:["lopressor","toprol","carvedilol","atenolol"], treats:"Blood pressure / heart rate / AFib", cond:"Atrial Fibrillation", note:"Often just blood pressure — ask why"},
+{name:"Lisinopril", aka:["zestril","prinivil","enalapril","ramipril"], treats:"High blood pressure", cond:null, note:"Hypertension — usually allowed"},
+{name:"Amlodipine", aka:["norvasc"], treats:"High blood pressure", cond:null, note:"Hypertension — usually allowed"},
+{name:"Losartan", aka:["cozaar","valsartan","olmesartan"], treats:"High blood pressure", cond:null, note:"Hypertension — usually allowed"},
+{name:"Hydrochlorothiazide", aka:["hctz","microzide"], treats:"Blood pressure / fluid", cond:null, note:"Usually allowed"},
+{name:"Furosemide", aka:["lasix"], treats:"Fluid retention (often heart failure)", cond:"Congestive Heart Failure", note:"Ask why — could be heart failure (serious) or just blood pressure"},
+{name:"Digoxin", aka:["lanoxin"], treats:"Heart failure / AFib", cond:"Congestive Heart Failure"},
+{name:"Entresto", aka:["sacubitril"], treats:"Heart failure", cond:"Congestive Heart Failure"},
+{name:"Atorvastatin", aka:["lipitor"], treats:"High cholesterol", cond:null, note:"Cholesterol — usually allowed"},
+{name:"Simvastatin", aka:["zocor","pravastatin"], treats:"High cholesterol", cond:null, note:"Cholesterol — usually allowed"},
+{name:"Rosuvastatin", aka:["crestor"], treats:"High cholesterol", cond:null, note:"Cholesterol — usually allowed"},
+{name:"Levothyroxine", aka:["synthroid","levoxyl"], treats:"Thyroid (underactive)", cond:null, note:"Thyroid — usually allowed"},
+{name:"Albuterol", aka:["proair","ventolin","proventil"], treats:"Asthma / COPD (rescue inhaler)", cond:"Asthma", note:"Also check COPD"},
+{name:"Spiriva", aka:["tiotropium"], treats:"COPD", cond:"COPD"},
+{name:"Symbicort", aka:["budesonide-formoterol","breo","trelegy"], treats:"COPD / asthma", cond:"COPD"},
+{name:"Advair", aka:["fluticasone-salmeterol","wixela"], treats:"COPD / asthma", cond:"COPD"},
+{name:"Prednisone", aka:["prednisolone"], treats:"Inflammation (many conditions)", cond:null, note:"Ask what it's for — COPD, autoimmune, cancer, etc."},
+{name:"Donepezil", aka:["aricept"], treats:"Alzheimer's / dementia", cond:"Alzheimer", note:"Memory loss — usually only Americo (Guaranteed Issue) will write"},
+{name:"Memantine", aka:["namenda"], treats:"Alzheimer's / dementia", cond:"Alzheimer"},
+{name:"Rivastigmine", aka:["exelon"], treats:"Alzheimer's / Parkinson's dementia", cond:"Alzheimer"},
+{name:"Carbidopa-Levodopa", aka:["sinemet"], treats:"Parkinson's disease", cond:"Parkinson"},
+{name:"Levetiracetam", aka:["keppra"], treats:"Seizures / epilepsy", cond:"Seizures"},
+{name:"Phenytoin", aka:["dilantin"], treats:"Seizures / epilepsy", cond:"Seizures"},
+{name:"Gabapentin", aka:["neurontin"], treats:"Nerve pain / neuropathy / seizures", cond:"Neuropathy", note:"Often diabetic neuropathy or chronic pain"},
+{name:"Pregabalin", aka:["lyrica"], treats:"Nerve pain / neuropathy", cond:"Neuropathy"},
+{name:"Sertraline", aka:["zoloft"], treats:"Depression / anxiety", cond:"Depression"},
+{name:"Escitalopram", aka:["lexapro"], treats:"Depression / anxiety", cond:"Depression"},
+{name:"Fluoxetine", aka:["prozac"], treats:"Depression", cond:"Depression"},
+{name:"Citalopram", aka:["celexa"], treats:"Depression", cond:"Depression"},
+{name:"Duloxetine", aka:["cymbalta"], treats:"Depression / nerve pain", cond:"Depression"},
+{name:"Lithium", aka:[], treats:"Bipolar disorder", cond:"Bipolar"},
+{name:"Quetiapine", aka:["seroquel"], treats:"Bipolar / schizophrenia", cond:"Bipolar", note:"Also used for schizophrenia"},
+{name:"Risperidone", aka:["risperdal"], treats:"Schizophrenia / bipolar", cond:"Schizophrenia"},
+{name:"Aripiprazole", aka:["abilify"], treats:"Bipolar / schizophrenia / depression", cond:"Bipolar"},
+{name:"Tamoxifen", aka:[], treats:"Breast cancer (hormone therapy)", cond:"Cancer", note:"Indicates a cancer history"},
+{name:"Anastrozole", aka:["arimidex"], treats:"Breast cancer (hormone therapy)", cond:"Cancer"},
+{name:"Letrozole", aka:["femara"], treats:"Breast cancer (hormone therapy)", cond:"Cancer"},
+{name:"Oxycodone", aka:["oxycontin","percocet","roxicodone"], treats:"Strong narcotic pain", cond:"Chronic Pain", note:"6+ fills = chronic-pain underwriting"},
+{name:"Hydrocodone", aka:["norco","vicodin"], treats:"Narcotic pain", cond:"Chronic Pain"},
+{name:"Morphine", aka:["ms contin"], treats:"Strong narcotic pain", cond:"Chronic Pain"},
+{name:"Fentanyl", aka:["duragesic"], treats:"Very strong narcotic pain", cond:"Chronic Pain", note:"Often serious illness — ask why"},
+{name:"Tramadol", aka:["ultram"], treats:"Mild narcotic pain", cond:"Chronic Pain"},
+{name:"Methadone", aka:[], treats:"Pain / addiction treatment", cond:"Alcohol / Drug Abuse", note:"Ask if for pain or addiction"},
+{name:"Suboxone", aka:["buprenorphine"], treats:"Opioid addiction treatment", cond:"Alcohol / Drug Abuse"}
+];
+function medMatches(q){ return MEDS.filter(m=> m.name.toLowerCase().includes(q) || (m.aka||[]).some(a=>a.toLowerCase().includes(q))); }
+function medCard(m){
+  const idx = m.cond? UWGRID.findIndex(r=>r.c.toLowerCase().includes(m.cond.toLowerCase())) : -1;
+  const condName = idx>=0? UWGRID[idx].c : null;
+  const sel=(S.uwSelected||[]).indexOf(idx)>=0;
+  const aka=(m.aka&&m.aka.length)? " ("+m.aka.map(a=>a.replace(/\b\w/g,c=>c.toUpperCase())).join(", ")+")" : "";
+  return `<div class="panel" style="padding:12px 16px;margin-bottom:12px;border-left:3px solid var(--blue)">
+    <div style="font-weight:700;font-size:13.5px">💊 ${escapeHtml(m.name)}<span class="muted" style="font-weight:500;font-size:11px">${escapeHtml(aka)}</span></div>
+    <div style="font-size:12.5px;margin-top:4px">Commonly prescribed for: <b>${escapeHtml(m.treats)}</b></div>
+    ${m.note?`<div class="muted" style="font-size:11px;margin-top:3px">⚠ ${escapeHtml(m.note)}</div>`:""}
+    ${condName? `<div class="row" style="margin-top:8px"><span class="muted" style="font-size:12px">→ Underwriting: <b>${escapeHtml(condName)}</b></span>
+       <button class="btn ${sel?'p':'s'} sm" onclick="toggleUwCond(${idx})">${sel?'✓ Added':'➕ Add to client'}</button></div>`
+     : `<div class="muted" style="font-size:11px;margin-top:6px">Usually not a major underwriting concern on its own.</div>`}
+  </div>`;
+}
 // classify a decision: good (write here / immediate), ok (graded/modified/needs review), bad (decline)
 function uwClass(t){
   const s=(t||"").toLowerCase();
@@ -327,14 +405,18 @@ function renderUwClientPanel(){
 function renderUnderwriting(){
   const q=(S.uwSearch||"").trim().toLowerCase();
   const rows=UWGRID.map((r,idx)=>({r,idx})).filter(x=> !q || x.r.c.toLowerCase().includes(q));
+  const meds = q? medMatches(q) : [];
+  const nothing = q && !rows.length && !meds.length;
   return `
   <div class="panel">
-    <h2>Underwriting Guide <span class="sub">search conditions → which carrier writes the client</span></h2>
-    <input id="uwSearch" value="${escapeHtml(S.uwSearch||'')}" oninput="setUwSearch(this.value)" placeholder="🔍 Search a condition — diabetes, cancer, copd, stroke, afib…" style="width:100%;padding:11px 12px;border:1px solid var(--rule);border-radius:8px;font-size:14px;margin-bottom:6px">
-    <div class="muted" style="font-size:11px">${rows.length} condition${rows.length===1?'':'s'} &nbsp;·&nbsp; <b>➕ Add</b> a client's conditions to find the carrier that approves them all &nbsp;·&nbsp; 🟢 immediate &nbsp; 🟡 graded/modified &nbsp; 🔴 decline</div>
+    <h2>Underwriting Guide <span class="sub">search a condition or medication → which carrier writes the client</span></h2>
+    <input id="uwSearch" value="${escapeHtml(S.uwSearch||'')}" oninput="setUwSearch(this.value)" placeholder="🔍 Search a condition or Rx — diabetes, eliquis, metformin, copd, keppra…" style="width:100%;padding:11px 12px;border:1px solid var(--rule);border-radius:8px;font-size:14px;margin-bottom:6px">
+    <div class="muted" style="font-size:11px">Type a <b>medication</b> to find the condition it points to, or a condition directly. <b>➕ Add</b> a client's conditions to see which carrier approves them all &nbsp;·&nbsp; 🟢 immediate &nbsp; 🟡 graded/modified &nbsp; 🔴 decline. Guide only — confirm with the client.</div>
   </div>
   ${renderUwClientPanel()}
-  ${rows.length? rows.map(x=>uwCard(x.r,x.idx)).join("") : `<div class="panel"><div class="empty">No condition matches "${escapeHtml(q)}". Try a shorter word (e.g. "heart", "cancer", "diab").</div></div>`}
+  ${meds.map(medCard).join("")}
+  ${rows.map(x=>uwCard(x.r,x.idx)).join("")}
+  ${nothing? `<div class="panel"><div class="empty">No condition or medication matches "${escapeHtml(q)}". Try a shorter word (e.g. "heart", "eliquis", "diab").</div></div>`:''}
   `;
 }
 
