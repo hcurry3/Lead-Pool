@@ -603,10 +603,13 @@ function activeDeals(){ return S.deals.filter(d=>d.status==="active"); }
 /* ---------- dial counter (counts each "Called") ---------- */
 function startOfTodayMs(){ const d=new Date(); d.setHours(0,0,0,0); return d.getTime(); }
 function startOfWeekMs(){ const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-d.getDay()); return d.getTime(); } // week starts Sunday
+// A note is a logged call if flagged, or matches a call-log shape (markCalled
+// "📞…", logCall "Called …", or a "[Disposition]…" prefix). Save-Note text won't match.
+function isCallNote(x){ const t=(x&&x.text)||""; return !!(x&&(x.call || /📞/.test(t) || /^Called /.test(t) || /^\[[A-Za-z]/.test(t))); }
 function dialCount(agentName, sinceMs){
   let n=0;
   S.leads.forEach(l=>(l.notes||[]).forEach(x=>{
-    if(x.agent===agentName && (x.call || /📞/.test(x.text||""))){
+    if(x.agent===agentName && isCallNote(x)){
       if(!sinceMs || new Date(x.ts).getTime()>=sinceMs) n++;
     }
   }));
@@ -616,7 +619,7 @@ const myDials = sinceMs => dialCount(meName(), sinceMs);
 // Tap the dial badge → see who you've dialed (newest first).
 function openDials(){
   const me=meName(); const calls=[];
-  S.leads.forEach(l=>(l.notes||[]).forEach(n=>{ if(n.agent===me && (n.call || /📞/.test(n.text||""))) calls.push({id:l.id, name:l.name, phone:l.phone, ts:n.ts, dispo:n.disposition||""}); }));
+  S.leads.forEach(l=>(l.notes||[]).forEach(n=>{ if(n.agent===me && isCallNote(n)) calls.push({id:l.id, name:l.name, phone:l.phone, ts:n.ts, dispo:n.disposition||""}); }));
   calls.sort((a,b)=> a.ts<b.ts?1:-1);
   document.getElementById("modalRoot").innerHTML=`
   <div class="modal-bg" onclick="if(event.target===this)closeModal()">
@@ -788,9 +791,18 @@ function renderCommission(){
       <div class="field"><label>Product</label><select onchange="setComm('commProduct',this.value)">${prods.map(p=>`<option ${p.product===product?'selected':''}>${escapeHtml(p.product)}</option>`).join("")}</select></div>
     </div>
     <div style="background:linear-gradient(120deg,var(--ink),var(--ink2));color:#fff;border-radius:14px;padding:18px 20px;margin-top:4px">
-      <div style="font-size:12px;color:#cdb88a;font-weight:700;letter-spacing:.5px;text-transform:uppercase">Estimated Year-1 Commission</div>
-      <div style="font-size:32px;font-weight:800;margin:4px 0">${pay!=null?MONEY(Math.round(pay)):'—'}</div>
-      <div style="font-size:12px;color:#aeb4c5">${r!=null?`${r}% at level ${level} · ${MONEY(ap)} AP`:`Not offered at level ${level}`}</div>
+      ${pay!=null? (()=>{ const m2=n=>"$"+(Number(n)||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); const adv=pay*0.75, mo=pay/12;
+        return `<div style="font-size:12px;color:#cdb88a;font-weight:700;letter-spacing:.5px;text-transform:uppercase">Annual Commission</div>
+        <div style="font-size:32px;font-weight:800;margin:2px 0">${m2(pay)}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+          <div style="background:rgba(255,255,255,.10);border-radius:8px;padding:9px 11px"><div style="color:#cdb88a;font-size:11px;font-weight:700">9‑MONTH ADVANCE (75%)</div><div style="font-weight:800;font-size:22px">${m2(adv)}</div></div>
+          <div style="background:rgba(255,255,255,.06);border-radius:8px;padding:9px 11px"><div style="color:#aeb4c5;font-size:11px">Comp rate</div><div style="font-weight:800;font-size:22px">${r}%</div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
+          ${[10,11,12].map(mn=>`<div style="background:rgba(255,255,255,.06);border-radius:8px;padding:7px 9px;text-align:center"><div style="color:#aeb4c5;font-size:10px">Month ${mn}</div><div style="font-weight:700;font-size:14px">${m2(mo)}</div></div>`).join("")}
+        </div>
+        <div style="font-size:11px;color:#aeb4c5;margin-top:10px">${escapeHtml(carrier)} · ${escapeHtml(product)} · FFL ${level} · ${MONEY(ap)} × ${r}%</div>`; })()
+      : `<div style="font-size:12px;color:#cdb88a;font-weight:700;text-transform:uppercase">Commission</div><div style="font-size:22px;font-weight:800;margin-top:6px">Not offered at level ${level}</div>`}
     </div>
   </div>
   <div class="panel">
