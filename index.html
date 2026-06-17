@@ -499,7 +499,7 @@ function renderPool(){
     ${leads.length? `<table><thead><tr>
         <th style="cursor:pointer;user-select:none" onclick="setPoolSort('name')">Name${sortArrow('name')}</th>
         <th style="cursor:pointer;user-select:none" onclick="setPoolSort('state')">State${sortArrow('state')}</th>
-        <th>Age</th>
+        <th style="cursor:pointer;user-select:none" onclick="setPoolSort('age')">Age${sortArrow('age')}</th>
         <th style="cursor:pointer;user-select:none" onclick="setPoolSort('status')">Status${sortArrow('status')}</th>
         <th style="cursor:pointer;user-select:none" onclick="setPoolSort('appt')">Appointment${sortArrow('appt')}</th>
         <th>Connected by</th><th></th></tr></thead><tbody>
@@ -1093,6 +1093,7 @@ function sortLeads(leads){
   // value used for comparison per sort key. Leads with no appointment sort
   // to the bottom (ascending) so booked leads surface first.
   const val=l=>{
+    if(key==="age") return Number(l.age)||0;                         // numeric
     if(key==="appt") return l.followup_date? (l.followup_date+(l.followup_time||"")) : "9999-99-99";
     return String(l[key]||"").toLowerCase();
   };
