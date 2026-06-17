@@ -138,6 +138,7 @@
   <div class="main">
     <div class="top">
       <h1 id="ptitle">Dashboard</h1>
+      <span id="dialBadge" title="Your dials today (counts each time you hit Called)" style="background:var(--accent);color:#fff;font-weight:700;font-size:12px;padding:5px 10px;border-radius:20px"></span>
       <div class="who">
         <span>Signed in as</span>
         <b id="meName" style="color:var(--ink)"></b>
@@ -598,6 +599,19 @@ function dialable(){ return S.leads.filter(l=>(l.status==="available"||l.status=
 // to me until I sell them.
 function myWorking(){ return S.leads.filter(l=> (l.touched_by||[]).includes(meName()) && l.status!=="closed" && l.status!=="dead" && !l.dnc && !((l.dismissed_by||[]).includes(meName()))); }
 function activeDeals(){ return S.deals.filter(d=>d.status==="active"); }
+/* ---------- dial counter (counts each "Called") ---------- */
+function startOfTodayMs(){ const d=new Date(); d.setHours(0,0,0,0); return d.getTime(); }
+function startOfWeekMs(){ const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-d.getDay()); return d.getTime(); } // week starts Sunday
+function dialCount(agentName, sinceMs){
+  let n=0;
+  S.leads.forEach(l=>(l.notes||[]).forEach(x=>{
+    if(x.agent===agentName && (x.call || /📞/.test(x.text||""))){
+      if(!sinceMs || new Date(x.ts).getTime()>=sinceMs) n++;
+    }
+  }));
+  return n;
+}
+const myDials = sinceMs => dialCount(meName(), sinceMs);
 
 /* ---------- pipeline staleness / upline alerts ---------- */
 const STALE_DAYS = 5;
@@ -656,6 +670,7 @@ function clearPoolFilters(){ S.poolSearch=""; S.poolStateFilter=""; render(); }
 const TITLES = {dash:"Dashboard",pool:"Lead Pool",import:"Import Leads",mine:"My Pipeline",followups:"Follow-ups",calendar:"Calendar",underwriting:"Underwriting Guide",board:"Leaderboard",command:"Command Center",admin:"Admin"};
 function render(){
   document.getElementById("ptitle").textContent = TITLES[S.view];
+  const db=document.getElementById("dialBadge"); if(db) db.textContent="📞 "+myDials(startOfTodayMs())+" dials today";
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on", b.dataset.v===S.view));
   const v=document.getElementById("view");
   if(S.view==="dash") v.innerHTML=renderDash();
@@ -694,6 +709,15 @@ function renderDash(){
     <div class="kpi"><div class="l">My Pipeline</div><div class="v">${myWorking().length}</div></div>
     <div class="kpi"><div class="l">Team Deals (7d)</div><div class="v">${weekDeals.length}</div></div>
     <div class="kpi"><div class="l">Team AP (7d)</div><div class="v gold">${MONEY(weekAP)}</div></div>
+  </div>
+  <div class="panel">
+    <h2>📞 Your Dials <span class="sub">counts every time you hit "Called"</span></h2>
+    <div class="kpis" style="margin-bottom:0">
+      <div class="kpi"><div class="l">Today</div><div class="v green">${myDials(startOfTodayMs())}</div></div>
+      <div class="kpi"><div class="l">This Week</div><div class="v">${myDials(startOfWeekMs())}</div></div>
+      <div class="kpi"><div class="l">All Time</div><div class="v">${myDials(0)}</div></div>
+      <div class="kpi"><div class="l">Sales / Dials (wk)</div><div class="v gold">${(()=>{const d=myDials(startOfWeekMs());const s=activeDeals().filter(x=>x.closed_by===meName()&&withinDays(x.close_date,7)).length;return d? (Math.round(s/d*100)+"%") : "—";})()}</div></div>
+    </div>
   </div>
   ${renderImportAlerts()}
   ${renderStaleAlerts()}
@@ -1006,7 +1030,7 @@ async function markCalled(id){
   // calling a lead again brings it back into my pipeline
   if(l.dismissed_by) l.dismissed_by=l.dismissed_by.filter(n=>n!==meName());
   if(!l.notes) l.notes=[];
-  l.notes.push({ts:new Date().toISOString(), agent:meName(), text:"📞 Logged a call"});
+  l.notes.push({ts:new Date().toISOString(), agent:meName(), text:"📞 Logged a call", call:true});
   await saveLead(l); render();
 }
 // Remove a lead from MY pipeline only. It stays in the shared pool and keeps
@@ -1759,7 +1783,7 @@ async function logCall(id){
   }
   if(!l.notes) l.notes=[];
   const text = (dispo? "["+dispo+"]" : "") + (txt? (dispo?" ":"")+txt : (dispo?"":"Called — no answer / no note"));
-  l.notes.push({ts:new Date().toISOString(), agent:meName(), text:text, disposition:dispo||""});
+  l.notes.push({ts:new Date().toISOString(), agent:meName(), text:text, disposition:dispo||"", call:true});
   box.value=""; if(dispoSel) dispoSel.value="";
   await saveLead(l); refreshNotes(id); render();
 }
