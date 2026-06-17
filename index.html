@@ -270,13 +270,19 @@ function uwClass(t){
   return "ok";
 }
 function setUwSearch(v){ S.uwSearch=v; render(); const el=document.getElementById("uwSearch"); if(el){ el.focus(); try{ el.setSelectionRange(v.length,v.length); }catch(e){} } }
-function uwCard(r){
+function toggleUwCond(idx){ if(!S.uwSelected) S.uwSelected=[]; const p=S.uwSelected.indexOf(idx); if(p>=0) S.uwSelected.splice(p,1); else S.uwSelected.push(idx); render(); }
+function clearUwSelected(){ S.uwSelected=[]; render(); }
+const UWRANK={good:0,ok:1,bad:2};
+function uwCard(r, idx){
   const items=r.v.map((d,i)=>({carrier:UWCARRIERS[i], d, cls:uwClass(d)}));
-  const rank={good:0,ok:1,bad:2};
-  const sorted=items.slice().sort((a,b)=>rank[a.cls]-rank[b.cls]);
+  const sorted=items.slice().sort((a,b)=>UWRANK[a.cls]-UWRANK[b.cls]);
   const best=items.filter(x=>x.cls==="good").map(x=>x.carrier.split(" · ")[0]);
-  return `<div class="panel" style="padding:12px 16px;margin-bottom:12px">
-    <div style="font-weight:700;font-size:13.5px;margin-bottom:8px">${escapeHtml(r.c)}</div>
+  const sel=(S.uwSelected||[]).indexOf(idx)>=0;
+  return `<div class="panel" style="padding:12px 16px;margin-bottom:12px;${sel?'border-left:3px solid var(--accent)':''}">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <div style="font-weight:700;font-size:13.5px">${escapeHtml(r.c)}</div>
+      <button class="btn ${sel?'p':'s'} sm" onclick="toggleUwCond(${idx})">${sel?'✓ Added to client':'➕ Add to client'}</button>
+    </div>
     ${best.length?`<div class="muted" style="font-size:11px;margin-bottom:8px">✅ Write here: <b style="color:var(--accent)">${best.map(escapeHtml).join(", ")}</b></div>`:`<div class="muted" style="font-size:11px;margin-bottom:8px;color:var(--gold)">No immediate-coverage carrier — best available below</div>`}
     ${sorted.map(x=>{const col=x.cls==="good"?"var(--accent)":x.cls==="bad"?"var(--red)":"var(--gold)";const dot=x.cls==="good"?"🟢":x.cls==="bad"?"🔴":"🟡";
       return `<div style="display:flex;gap:8px;padding:6px 0;border-top:1px solid var(--rule);font-size:12.5px;align-items:baseline">
@@ -285,20 +291,54 @@ function uwCard(r){
       </div>`;}).join("")}
   </div>`;
 }
+// For a client with several conditions, each carrier's standing = its WORST
+// decision across all selected conditions (one decline anywhere => carrier declines).
+function uwClientResults(sel){
+  return UWCARRIERS.map((carrier,ci)=>{
+    const detail=sel.map(idx=>{ const r=UWGRID[idx]; const d=r.v[ci]; return {cond:r.c, d, cls:uwClass(d)}; });
+    const worst=detail.reduce((w,x)=> UWRANK[x.cls]>UWRANK[w]?x.cls:w, "good");
+    return {carrier, cls:worst, detail};
+  }).sort((a,b)=>UWRANK[a.cls]-UWRANK[b.cls]);
+}
+function renderUwClientPanel(){
+  const sel=S.uwSelected||[]; if(!sel.length) return "";
+  const res=uwClientResults(sel);
+  const writers=res.filter(x=>x.cls==="good").map(x=>x.carrier.split(" · ")[0]);
+  const graded=res.filter(x=>x.cls==="ok").map(x=>x.carrier.split(" · ")[0]);
+  const head = writers.length
+    ? `🟢 <b style="color:var(--accent)">Write immediate: ${writers.map(escapeHtml).join(", ")}</b>`
+    : (graded.length ? `🟡 No immediate carrier — best available (graded/modified): <b style="color:var(--gold)">${graded.map(escapeHtml).join(", ")}</b>`
+                      : `🔴 <b style="color:var(--red)">No carrier on this grid approves this client — all decline</b>`);
+  return `<div class="panel" style="border-left:3px solid var(--accent)">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <h2 style="margin:0">Best Carrier for This Client <span class="sub">${sel.length} condition${sel.length===1?'':'s'}</span></h2>
+      <button class="btn s sm" onclick="clearUwSelected()">Clear</button>
+    </div>
+    <div class="row" style="margin-bottom:10px">${sel.map(i=>`<span class="pill">${escapeHtml(UWGRID[i].c)} <b style="cursor:pointer;margin-left:3px" onclick="toggleUwCond(${i})">✕</b></span>`).join("")}</div>
+    <div style="font-size:13px;margin-bottom:10px">${head}</div>
+    ${res.map(x=>{const col=x.cls==="good"?"var(--accent)":x.cls==="bad"?"var(--red)":"var(--gold)";const dot=x.cls==="good"?"🟢":x.cls==="bad"?"🔴":"🟡";
+      return `<div style="padding:8px 0;border-top:1px solid var(--rule)">
+        <div style="font-weight:700;font-size:13px;color:${col}">${dot} ${escapeHtml(x.carrier.split(" · ")[0])} <span class="muted" style="font-weight:500;font-size:10px">${escapeHtml(x.carrier.split(" · ")[1]||"")}</span></div>
+        ${x.detail.map(dd=>{const c2=dd.cls==="good"?"var(--accent)":dd.cls==="bad"?"var(--red)":"var(--gold)";
+          return `<div style="font-size:11px;margin-top:3px"><span class="muted">${escapeHtml(dd.cond)}:</span> <span style="color:${c2}">${escapeHtml(dd.d)}</span></div>`;}).join("")}
+      </div>`;}).join("")}
+  </div>`;
+}
 function renderUnderwriting(){
   const q=(S.uwSearch||"").trim().toLowerCase();
-  const list=q? UWGRID.filter(r=>r.c.toLowerCase().includes(q)) : UWGRID;
+  const rows=UWGRID.map((r,idx)=>({r,idx})).filter(x=> !q || x.r.c.toLowerCase().includes(q));
   return `
   <div class="panel">
-    <h2>Underwriting Guide <span class="sub">search a health condition → see which carrier to write</span></h2>
+    <h2>Underwriting Guide <span class="sub">search conditions → which carrier writes the client</span></h2>
     <input id="uwSearch" value="${escapeHtml(S.uwSearch||'')}" oninput="setUwSearch(this.value)" placeholder="🔍 Search a condition — diabetes, cancer, copd, stroke, afib…" style="width:100%;padding:11px 12px;border:1px solid var(--rule);border-radius:8px;font-size:14px;margin-bottom:6px">
-    <div class="muted" style="font-size:11px">${list.length} condition${list.length===1?'':'s'} &nbsp; · &nbsp; 🟢 write here (immediate/full) &nbsp; 🟡 graded / modified / review &nbsp; 🔴 decline &nbsp; · &nbsp; Family First Life FE grid</div>
+    <div class="muted" style="font-size:11px">${rows.length} condition${rows.length===1?'':'s'} &nbsp;·&nbsp; <b>➕ Add</b> a client's conditions to find the carrier that approves them all &nbsp;·&nbsp; 🟢 immediate &nbsp; 🟡 graded/modified &nbsp; 🔴 decline</div>
   </div>
-  ${list.length? list.map(uwCard).join("") : `<div class="panel"><div class="empty">No condition matches "${escapeHtml(q)}". Try a shorter word (e.g. "heart", "cancer", "diab").</div></div>`}
+  ${renderUwClientPanel()}
+  ${rows.length? rows.map(x=>uwCard(x.r,x.idx)).join("") : `<div class="panel"><div class="empty">No condition matches "${escapeHtml(q)}". Try a shorter word (e.g. "heart", "cancer", "diab").</div></div>`}
   `;
 }
 
-let S = { leads:[], deals:[], agents:[], me:null, session:null, view:"dash", boardMode:"agent", cpl:1, poolSort:{key:"name",dir:"asc"}, poolStateFilter:"", poolSearch:"", calRef:null, uwSearch:"" };
+let S = { leads:[], deals:[], agents:[], me:null, session:null, view:"dash", boardMode:"agent", cpl:1, poolSort:{key:"name",dir:"asc"}, poolStateFilter:"", poolSearch:"", calRef:null, uwSearch:"", uwSelected:[] };
 const DISPOSITIONS = ["No answer","Voicemail","Callback","Not interested","Wrong number","DNC"];
 
 /* ---------- Supabase data layer (per-row writes; no cross-agent clobbering) ---------- */
