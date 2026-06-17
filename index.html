@@ -616,6 +616,16 @@ function dialCount(agentName, sinceMs){
   return n;
 }
 const myDials = sinceMs => dialCount(meName(), sinceMs);
+// Aggregate dials per agent since a timestamp → [{key, dials}] sorted desc.
+function dialsBy(sinceMs){
+  const m={};
+  S.leads.forEach(l=>(l.notes||[]).forEach(x=>{
+    if(x.agent && isCallNote(x) && (!sinceMs || new Date(x.ts).getTime()>=sinceMs)){
+      m[x.agent]=(m[x.agent]||0)+1;
+    }
+  }));
+  return Object.entries(m).map(([key,dials])=>({key,dials})).sort((a,b)=>b.dials-a.dials);
+}
 // Tap the dial badge → see who you've dialed (newest first).
 function openDials(){
   const me=meName(); const calls=[];
@@ -1007,6 +1017,34 @@ function aggBy(field){
 }
 function renderBoard(){
   const mode=S.boardMode;
+  const seg=`<div class="seg">
+        <button class="${mode==='agent'?'on':''}" onclick="setBoard('agent')">By Agent</button>
+        <button class="${mode==='team'?'on':''}" onclick="setBoard('team')">By Team</button>
+        <button class="${mode==='upline'?'on':''}" onclick="setBoard('upline')">By Upline</button>
+        <button class="${mode==='dials'?'on':''}" onclick="setBoard('dials')">📞 Dials Today</button>
+      </div>`;
+  if(mode==="dials"){
+    const teamOf={}; S.agents.forEach(a=>{ teamOf[a.name]=a.team; });
+    const rows=dialsBy(startOfTodayMs());
+    const total=rows.reduce((s,r)=>s+r.dials,0);
+    return `
+  <div class="panel">
+    <div class="row" style="justify-content:space-between;margin-bottom:14px">
+      <h2 style="margin:0">Leaderboard <span class="sub">📞 ${total} dials today across the floor</span></h2>
+      ${seg}
+    </div>
+    ${rows.length? `<table><thead><tr><th>#</th><th>Agent</th><th>Team</th><th>Dials Today</th></tr></thead><tbody>
+      ${rows.map((r,i)=>`<tr>
+        <td><span class="rank r${i+1}">${i+1}</span></td>
+        <td><b>${escapeHtml(r.key)}</b></td>
+        <td><span class="pill">${teamOf[r.key]||'—'}</span></td>
+        <td><b style="color:var(--accent)">${r.dials}</b></td>
+      </tr>`).join("")}
+    </tbody></table>
+    <div class="muted" style="margin-top:10px">🔥 Most dials today: <b>${escapeHtml(rows[0].key)}</b> with ${rows[0].dials} — activity wins.</div>
+    ` : `<div class="empty">No dials logged yet today — hit "Called" to get on the board.</div>`}
+  </div>`;
+  }
   const field = mode==="agent"?"closed_by": mode==="team"?"closer_team":"closer_upline";
   const rows = aggBy(field);
   const totalAP = rows.reduce((s,r)=>s+r.ap,0);
@@ -1014,11 +1052,7 @@ function renderBoard(){
   <div class="panel">
     <div class="row" style="justify-content:space-between;margin-bottom:14px">
       <h2 style="margin:0">Leaderboard <span class="sub">${activeDeals().length} active deals · ${MONEY(totalAP)} total AP</span></h2>
-      <div class="seg">
-        <button class="${mode==='agent'?'on':''}" onclick="setBoard('agent')">By Agent</button>
-        <button class="${mode==='team'?'on':''}" onclick="setBoard('team')">By Team</button>
-        <button class="${mode==='upline'?'on':''}" onclick="setBoard('upline')">By Upline</button>
-      </div>
+      ${seg}
     </div>
     ${rows.length? `<table><thead><tr><th>#</th><th>${mode==='agent'?'Agent':mode==='team'?'Team':'Upline'}</th>${mode==='agent'?'<th>Team</th>':''}<th>Deals</th><th>Annual AP</th><th>Avg AP</th></tr></thead><tbody>
       ${rows.map((r,i)=>`<tr>
