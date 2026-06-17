@@ -129,6 +129,7 @@
       <button data-v="followups"><span class="ic">◷</span><span class="lbl">Follow-ups</span></button>
       <button data-v="calendar"><span class="ic">▤</span><span class="lbl">Calendar</span></button>
       <button data-v="underwriting"><span class="ic">⚕</span><span class="lbl">Underwriting</span></button>
+      <button data-v="commission"><span class="ic">$</span><span class="lbl">Commission</span></button>
       <button data-v="board"><span class="ic">★</span><span class="lbl">Leaderboard</span></button>
       <button data-v="command" class="owner-only"><span class="ic">◆</span><span class="lbl">Command</span></button>
       <button data-v="admin" class="owner-only"><span class="ic">⚙</span><span class="lbl">Admin</span></button>
@@ -421,7 +422,7 @@ function renderUnderwriting(){
   `;
 }
 
-let S = { leads:[], deals:[], agents:[], me:null, session:null, view:"dash", boardMode:"agent", cpl:1, poolSort:{key:"name",dir:"asc"}, poolStateFilter:"", poolSearch:"", calRef:null, uwSearch:"", uwSelected:[] };
+let S = { leads:[], deals:[], agents:[], me:null, session:null, view:"dash", boardMode:"agent", cpl:1, poolSort:{key:"name",dir:"asc"}, poolStateFilter:"", poolSearch:"", calRef:null, uwSearch:"", uwSelected:[], commLevel:100, commMonthly:"", commCarrier:"", commProduct:"" };
 const DISPOSITIONS = ["No answer","Voicemail","Callback","Not interested","Wrong number","DNC"];
 
 /* ---------- Supabase data layer (per-row writes; no cross-agent clobbering) ---------- */
@@ -688,7 +689,7 @@ function setPoolSearch(v){
 function clearPoolFilters(){ S.poolSearch=""; S.poolStateFilter=""; render(); }
 
 /* ---------- render router ---------- */
-const TITLES = {dash:"Dashboard",pool:"Lead Pool",import:"Import Leads",mine:"My Pipeline",followups:"Follow-ups",calendar:"Calendar",underwriting:"Underwriting Guide",board:"Leaderboard",command:"Command Center",admin:"Admin"};
+const TITLES = {dash:"Dashboard",pool:"Lead Pool",import:"Import Leads",mine:"My Pipeline",followups:"Follow-ups",calendar:"Calendar",underwriting:"Underwriting Guide",commission:"Commission Calculator",board:"Leaderboard",command:"Command Center",admin:"Admin"};
 function render(){
   document.getElementById("ptitle").textContent = TITLES[S.view];
   const db=document.getElementById("dialBadge"); if(db) db.textContent="📞 "+myDials(startOfTodayMs())+" dials today";
@@ -701,9 +702,103 @@ function render(){
   else if(S.view==="followups") v.innerHTML=renderFollowups();
   else if(S.view==="calendar") v.innerHTML=renderCalendar();
   else if(S.view==="underwriting") v.innerHTML=renderUnderwriting();
+  else if(S.view==="commission") v.innerHTML=renderCommission();
   else if(S.view==="board") v.innerHTML=renderBoard();
   else if(S.view==="command") v.innerHTML=renderCommand();
   else if(S.view==="admin") v.innerHTML=renderAdmin();
+}
+
+/* ---------- Commission calculator (FFL Year-1 comp) ----------
+   Rates align to LEVELS (the agent's FFL contract level). Year-1 % of AP. */
+const LEVELS=[145,140,135,130,125,120,115,110,105,100,95,90,85,80,75,70,65];
+const COMM=[
+{carrier:"Aetna", product:"ACC Final Expense", rates:[144,144,137,130,125,120,115,107.5,100,92.5,85,77.5,70,70,70,70,70]},
+{carrier:"Aetna", product:"CLI Protection FE", rates:[99,99,97.5,95,93.5,90,89,83,80,73,70,68,65,65,65,65,65]},
+{carrier:"Aflac", product:"Final EX", rates:[null,123,118,113,108,100,93,85,78,70,70,70,63,63,63,63,63]},
+{carrier:"Americo", product:"Eagle Select FE", rates:[125,125,120,115,110,105,100,95,90,85,80,75,70,65,60,55,50]},
+{carrier:"Americo", product:"Term 100", rates:[130,125,120,115,110,105,100,95,90,85,80,75,70,65,60,55,50]},
+{carrier:"Americo", product:"Term 125", rates:[145,140,135,130,125,120,115,110,105,100,95,90,85,80,75,70,65]},
+{carrier:"Americo", product:"Instant Decision IUL", rates:[130,125,120,115,110,105,100,95,90,85,80,75,70,65,60,55,50]},
+{carrier:"American Amicable", product:"Senior/Family Choice", rates:[125,125,120,115,110,105,100,95,90,85,80,75,70,65,60,55,50]},
+{carrier:"American Amicable", product:"EZ Term", rates:[105,105,100,95,90,85,80,75,70,65,60,55,50,45,40,35,30]},
+{carrier:"American Amicable", product:"Secure Life Plus", rates:[140,140,135,130,125,120,115,110,105,100,95,90,85,80,75,70,65]},
+{carrier:"American Amicable", product:"Home Protector", rates:[145,140,135,130,125,120,115,110,105,100,95,90,85,80,75,70,65]},
+{carrier:"American Amicable", product:"OBA", rates:[100,100,95,90,85,80,75,70,65,60,55,50,45,40,35,30,30]},
+{carrier:"American Amicable", product:"Term Made Simple", rates:[130,130,125,120,115,110,105,100,95,90,85,80,75,70,65,60,55]},
+{carrier:"American Amicable", product:"Family Protector", rates:[130,130,125,120,115,110,105,100,95,90,85,80,75,70,65,60,55]},
+{carrier:"American Amicable", product:"Intelligent Choice IUL", rates:[125,125,120,115,110,105,100,95,90,85,80,75,70,65,60,55,50]},
+{carrier:"Corebridge", product:"GIWL", rates:[80,80,77.5,75,72.5,70,67.5,65,62.5,60,57.5,57.5,55,55,55,55,55]},
+{carrier:"Corebridge", product:"SIWL", rates:[132,132,127,122,117,112,107,102,97,92,87,82,77,72,67,62,57]},
+{carrier:"Ethos", product:"LGA Prime", rates:[120,117.5,115,112.5,110,107.5,105,102.5,100,97.5,95,92.5,90,87.5,85,82.5,80]},
+{carrier:"Ethos", product:"TruStage TAWL", rates:[120,120,115,110,105,100,95,90,85,82.5,80,77.5,75,72.5,65,60,55]},
+{carrier:"Ethos", product:"TruStage SITL", rates:[120,115,110,105,100,95,90,85,80,75,70,65,60,55,50,50,50]},
+{carrier:"Ethos", product:"TruStage GAWL", rates:[30,27.5,25,22.5,20,17.5,15,12.5,10,7.5,5,2.5,2.5,2.5,2.5,2.5,2.5]},
+{carrier:"Ethos", product:"Ethos IUL", rates:[125,132,115,110,105,100,95,90,85,80,75,70,65,60,55,50,45]},
+{carrier:"Ethos", product:"Ameritas SI Term", rates:[120,117.5,115,112.5,110,107.5,105,102.5,100,97.5,95,92.5,90,87.5,85,82.5,80]},
+{carrier:"Ethos", product:"Accidental Death", rates:[85,85,80,75,70,65,60,55,50,45,40,35,30,25,25,25,25]},
+{carrier:"Foresters", product:"Strong Foundation", rates:[130,130,125,120,115,110,105,105,100,95,90,85,80,75,70,65,60]},
+{carrier:"Foresters", product:"PlanRight", rates:[120,120,115,110,105,100,95,90,85,80,75,70,65,60,60,60,60]},
+{carrier:"InstaBrain", product:"Life Term 20yr", rates:[130,125,120,115,110,105,100,95,90,85,80,75,70,65,60,55,55]},
+{carrier:"InstaBrain", product:"Final Expense WL", rates:[127.5,125,122.5,120,117.5,115,112.5,110,107.5,105,102.5,100,97.5,95,92.5,90,90]},
+{carrier:"InstaBrain", product:"Guaranteed Issue WL", rates:[72.5,70,67.5,65,62.5,60,57.5,55,52.5,50,47.5,45,42.5,40,37.5,35,35]},
+{carrier:"InstaBrain", product:"Senior Life Term/WL", rates:[90,85,80,75,70,65,60,55,50,45,40,35,30,25,20,15,15]},
+{carrier:"NLG", product:"Universal Life", rates:[null,110,105,100,95,90,85,80,75,70,65,60,55,50,45,40,40]},
+{carrier:"Mutual of Omaha", product:"Term Life Express", rates:[145,140,135,130,125,120,115,110,105,100,95,90,85,80,75,75,65]},
+{carrier:"Mutual of Omaha", product:"Final Expense", rates:[125,125,120,115,110,105,100,95,90,86,82,78,74,70,65,61,57]},
+{carrier:"Mutual of Omaha", product:"IUL Express", rates:[130,130,125,120,115,110,105,100,95,90,85,80,75,70,65,60,55]},
+{carrier:"Mutual of Omaha", product:"Children's WL", rates:[100,100,97,95,92,90,85,80,75,70,65,60,55,50,45,40,35]},
+{carrier:"Mutual of Omaha", product:"Universal Life", rates:[125,125,120,115,110,105,100,95,90,85,80,75,70,65,60,55,50]},
+{carrier:"Mutual of Omaha", product:"Accum UL Answers", rates:[95,95,90,85,80,75,70,65,60,55,50,45,40,35,30,25,20]},
+{carrier:"Mutual of Omaha", product:"Term Life Answers", rates:[110,110,105,100,95,90,85,80,75,70,65,60,55,50,45,40,35]},
+{carrier:"Mutual of Omaha", product:"Accidental Death", rates:[130,130,125,120,115,110,105,100,95,90,85,80,75,70,65,60,55]},
+{carrier:"Royal Neighbors", product:"Term", rates:[null,120,115,110,100,100,100,95,90,85,80,75,50,50,50,50,50]},
+{carrier:"Royal Neighbors", product:"Royal Legacy SPWL", rates:[null,16,15,14,13,13,13,13,12,11,10,9,7,7,7,7,7]},
+{carrier:"Royal Neighbors", product:"Secure Life IUL", rates:[null,125,120,112,105,105,105,100,95,90,85,80,50,50,50,50,50]},
+{carrier:"Royal Neighbors", product:"SI Whole Life", rates:[null,125,120,110,100,100,100,95,90,85,80,75,45,45,45,45,45]},
+{carrier:"Transamerica", product:"FEX Immediate Solution", rates:[125,125,120,115,110,105,100,95,90,85,80,75,70,65,60,55,55]},
+{carrier:"Transamerica", product:"Whole Life", rates:[140,140,135,125,115,110,105,100,95,90,85,80,75,70,65,60,60]},
+{carrier:"Transamerica", product:"FFIUL", rates:[122,122,117,112,107,102,97,92,87,82,77,72,67,62,57,52,52]},
+{carrier:"Transamerica", product:"Term Super 20/25/30", rates:[105,105,100,95,92,90,85,82,80,75,70,65,60,55,50,45,45]},
+{carrier:"Transamerica", product:"Graded FE Express", rates:[98,98,93,88,83,83,73,68,63,63,53,48,43,38,33,28,28]}
+];
+function commRate(carrier,product,level){ const p=COMM.find(x=>x.carrier===carrier&&x.product===product); if(!p) return null; const r=p.rates[LEVELS.indexOf(level)]; return (r==null)?null:r; }
+function setComm(field,val){ S[field]= field==="commLevel"?Number(val):val; if(field==="commCarrier"){ const ps=COMM.filter(x=>x.carrier===val); S.commProduct=ps[0]?ps[0].product:""; } render(); }
+function setCommMonthly(v){ S.commMonthly=v; render(); const el=document.getElementById("commMonthly"); if(el){ el.focus(); try{ el.setSelectionRange(el.value.length,el.value.length); }catch(e){} } }
+function renderCommission(){
+  const level=S.commLevel||100;
+  const monthly=parseFloat(S.commMonthly)||0;
+  const ap=Math.round(monthly*12*100)/100;
+  const carriers=[...new Set(COMM.map(x=>x.carrier))];
+  const carrier=COMM.some(x=>x.carrier===S.commCarrier)? S.commCarrier : carriers[0];
+  const prods=COMM.filter(x=>x.carrier===carrier);
+  const product=(prods.find(p=>p.product===S.commProduct)? S.commProduct : (prods[0]&&prods[0].product));
+  const r=commRate(carrier,product,level);
+  const pay=(r!=null)? ap*r/100 : null;
+  const all=COMM.map(x=>{const rr=x.rates[LEVELS.indexOf(level)]; return {c:x.carrier,p:x.product,r:rr,pay:rr!=null?ap*rr/100:null};}).filter(x=>x.pay!=null).sort((a,b)=>b.pay-a.pay);
+  return `
+  <div class="panel">
+    <h2>Commission Calculator <span class="sub">your Year-1 payout when you sell a policy</span></h2>
+    <div class="grid2">
+      <div class="field"><label>Your FFL contract level</label><select onchange="setComm('commLevel',this.value)">${LEVELS.map(l=>`<option value="${l}" ${l===level?'selected':''}>${l}</option>`).join("")}</select></div>
+      <div class="field"><label>Monthly premium ($)</label><input id="commMonthly" type="number" value="${escapeHtml(String(S.commMonthly||''))}" oninput="setCommMonthly(this.value)" placeholder="e.g. 95"></div>
+    </div>
+    <div class="muted" style="font-size:12px;margin-bottom:10px">Annual premium (AP): <b>${MONEY(ap)}</b> &nbsp;·&nbsp; commission = AP × your rate. Year-1 estimate — verify against your official FFL comp guide.</div>
+    <div class="grid2">
+      <div class="field"><label>Carrier</label><select onchange="setComm('commCarrier',this.value)">${carriers.map(c=>`<option ${c===carrier?'selected':''}>${escapeHtml(c)}</option>`).join("")}</select></div>
+      <div class="field"><label>Product</label><select onchange="setComm('commProduct',this.value)">${prods.map(p=>`<option ${p.product===product?'selected':''}>${escapeHtml(p.product)}</option>`).join("")}</select></div>
+    </div>
+    <div style="background:linear-gradient(120deg,var(--ink),var(--ink2));color:#fff;border-radius:14px;padding:18px 20px;margin-top:4px">
+      <div style="font-size:12px;color:#cdb88a;font-weight:700;letter-spacing:.5px;text-transform:uppercase">Estimated Year-1 Commission</div>
+      <div style="font-size:32px;font-weight:800;margin:4px 0">${pay!=null?MONEY(Math.round(pay)):'—'}</div>
+      <div style="font-size:12px;color:#aeb4c5">${r!=null?`${r}% at level ${level} · ${MONEY(ap)} AP`:`Not offered at level ${level}`}</div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Top Payouts <span class="sub">${MONEY(ap)} AP at level ${level} — where this premium pays most</span></h2>
+    ${ap>0? `<table><thead><tr><th>#</th><th>Carrier</th><th>Product</th><th>Rate</th><th>Year-1</th></tr></thead><tbody>
+      ${all.slice(0,20).map((x,i)=>`<tr><td>${i+1}</td><td><b>${escapeHtml(x.c)}</b></td><td>${escapeHtml(x.p)}</td><td class="muted">${x.r}%</td><td><b style="color:var(--accent)">${MONEY(Math.round(x.pay))}</b></td></tr>`).join("")}
+    </tbody></table>` : `<div class="empty">Enter a monthly premium above to compare payouts across all carriers.</div>`}
+  </div>`;
 }
 
 /* ---------- DASHBOARD ---------- */
