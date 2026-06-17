@@ -128,6 +128,7 @@
       <button data-v="mine"><span class="ic">◉</span><span class="lbl">My Pipeline</span></button>
       <button data-v="followups"><span class="ic">◷</span><span class="lbl">Follow-ups</span></button>
       <button data-v="calendar"><span class="ic">▤</span><span class="lbl">Calendar</span></button>
+      <button data-v="underwriting"><span class="ic">⚕</span><span class="lbl">Underwriting</span></button>
       <button data-v="board"><span class="ic">★</span><span class="lbl">Leaderboard</span></button>
       <button data-v="command" class="owner-only"><span class="ic">◆</span><span class="lbl">Command</span></button>
       <button data-v="admin" class="owner-only"><span class="ic">⚙</span><span class="lbl">Admin</span></button>
@@ -178,7 +179,126 @@ const uid = p => p+"_"+Date.now().toString(36)+Math.random().toString(36).slice(
 const CARRIERS = ["Americo (Eagle Premier)","Aetna/CVS (Accendo)","Prosperity (New Vista)","American-Amicable (Senior Choice)","Foresters (Plan Right)","Mutual of Omaha (Living Promise)","Transamerica (Immediate Solution)"];
 const WEEK_GOAL = 5000;
 
-let S = { leads:[], deals:[], agents:[], me:null, session:null, view:"dash", boardMode:"agent", cpl:1, poolSort:{key:"name",dir:"asc"}, poolStateFilter:"", poolSearch:"", calRef:null };
+/* ---------- Underwriting cheat sheet (Family First Life FE grid) ----------
+   Columns map to the carriers in CARRIERS: Americo(Eagle Premier),
+   Aetna/CVS(Accendo), Prosperity(New Vista), American-Amicable(Senior Choice),
+   Foresters(Plan Right), Mutual of Omaha(Living Promise). */
+const UWCARRIERS = ["Americo · Eagle Premier","Aetna/CVS · Accendo","Prosperity · New Vista","American-Amicable · Senior Choice","Foresters · Plan Right","Mutual of Omaha · Living Promise"];
+const UWGRID = [
+{c:"AIDS / HIV / ARC", v:["DECLINE","DECLINE","DECLINE","DECLINE* (see state app)","DECLINE","DECLINE"]},
+{c:"AFib / Atrial Fibrillation / Irregular Heartbeat", v:["Not asked - Allowed","Not asked - Allowed","Not asked - Allowed","Not asked - Allowed","Not asked - Allowed","Within 2 yrs - Graded"]},
+{c:"Alcohol / Drug Abuse", v:["Within 2 yrs - Guaranteed Issue","Treatment within past 2 yrs - Modified","Within 2 yrs - Modified","Treated within 2 yrs - ROP","Treatment within past 2 yrs - Basic","Within 2 yrs - Graded"]},
+{c:"ALS (Lou Gehrig's)", v:["Guaranteed Issue","DECLINE","DECLINE","DECLINE","DECLINE","DECLINE"]},
+{c:"Alzheimer's / Dementia / Memory Loss / Cognitive", v:["Guaranteed Issue","DECLINE","DECLINE","DECLINE","DECLINE","DECLINE"]},
+{c:"Amputation", v:["Due to Diabetes - DECLINE","Modified; due to any disease/Diabetes - DECLINE","Due to Diabetes - Modified","Caused by disease - DECLINE","DECLINE","Due to Diabetes - DECLINE"]},
+{c:"Aneurysm", v:["Not asked - Allowed","Within 1 yr - Modified","Within 2 yrs - Modified","Within 2 yrs - ROP","Within 2 yrs - Basic","Not asked - Allowed"]},
+{c:"Angina (Chest Pain)", v:["Within 1 yr - Guaranteed Issue","Treated <1yr - Modified; 1-2yr - Standard; >2yr - Preferred","Within 2 yrs - Modified","Within 2 yrs - ROP","Treated <1yr - Basic; <2yr - Standard","Within 1 yr - DECLINE; Within 2 yrs - Graded"]},
+{c:"Angioplasty", v:["Within 1 yr - Guaranteed Issue","See Heart Surgery","Within 2 yrs - Modified","Not asked - Allowed","See Heart Surgery","Within 1 yr - DECLINE; Within 2 yrs - Graded"]},
+{c:"Arthritis", v:["Not asked - Allowed","Not asked - Allowed","Not asked - Allowed","Not asked - Allowed","Not asked - Allowed","Not asked - Allowed"]},
+{c:"Assisted Living / Long Term Care Facility", v:["Within 6 mos - Guaranteed Issue","DECLINE","Current - DECLINE","DECLINE","DECLINE","Current - DECLINE"]},
+{c:"Asthma (Chronic)", v:["Not asked - Allowed","Standard","Not asked - Allowed","Not asked - Allowed","Not asked - Allowed","Not asked - Allowed"]},
+{c:"Autism", v:["Not asked - Allowed","See Mental Incapacity","Graded","Not asked","Not asked","DECLINE"]},
+{c:"Bipolar", v:["Not asked - Allowed","Preferred","Graded","Not asked - Allowed","Preferred","Within 4 yrs - Graded"]},
+{c:"Black Lung", v:["Not asked - Allowed","Not asked - Allowed","Graded","Not asked - Allowed","Not asked - Allowed","Not asked - Allowed"]},
+{c:"Blood Clots", v:["See Stent / check Med List","Not asked - ask about Stents/Heart Surgery","See Stent","Surgery within 2 yrs - ROP; within 3 yrs - Graded","See Stent","See Stent"]},
+{c:"Blood Disorder (Polycythemia, Thrombocytopenia, Hemophilia, Coagulation)", v:["Not asked - Allowed","Not asked","Graded","See Blood Clotting","Not asked","Not asked - Allowed"]},
+{c:"Bone Marrow Transplant", v:["Not asked - Allowed","DECLINE","DECLINE","Not asked - Allowed","DECLINE","DECLINE"]},
+{c:"Bronchitis (Chronic)", v:["Not asked - check inhalers/meds","Standard","Not asked - check inhalers/meds","Treated <2yr - ROP; <3yr - Graded","Not asked - check inhalers/meds","Graded"]},
+{c:"Cancer (other than Basal Cell)", v:["Metastatic/Recurrent - DECLINE; <2yr - Guaranteed Issue; >2yr - allowed","Current/treated <2yr/recurring - DECLINE; Basal/Squamous - Preferred; >2yr - Preferred","Recurring or current - DECLINE; <3yr - Modified","Current - DECLINE; recurring/<2yr - ROP; <3yr - Graded","Current - DECLINE; diagnosed/treated <3yr - Basic","<2yr/Metastatic/Recurring - DECLINE; 2-4yr - Graded; >4yr - allowed"]},
+{c:"Cerebral Palsy", v:["Not asked - Allowed","DECLINE","Not asked - Allowed","Diagnosed/treated <3yr - Graded","Not asked - Allowed","Not asked - Allowed"]},
+{c:"Chronic Pain (6+ narcotic pain fills)", v:["Check Med List","Check Meds","Check Med List","Check Med List - see Neuropathy","Check Meds","Check Med List"]},
+{c:"Cirrhosis", v:["Guaranteed Issue","Treated <2yr - Modified","Stage C - DECLINE; Stage A/B - Graded","Treated <2yr - ROP; <3yr - Graded","Standard","DECLINE"]},
+{c:"Congestive Heart Failure / Diastolic Heart Failure", v:["Guaranteed Issue","DECLINE","Within 2 yrs - Modified","DECLINE","DECLINE","DECLINE"]},
+{c:"Coronary Artery Disease", v:["Within 1 yr - Guaranteed Issue","See Heart Disease","See Heart Disease","ROP","See Heart Disease","Within 1 yr - DECLINE; Within 2 yrs - Graded"]},
+{c:"COPD", v:["Guaranteed Issue","Standard","Graded","Treated <2yr - ROP; <3yr - Graded; >3yr - Immediate","Standard","Graded"]},
+{c:"Crohn's Disease", v:["Allowed","Not asked","Not asked - Allowed","Not asked - Allowed","Not asked - Allowed","Not asked - Allowed"]},
+{c:"Cystic Fibrosis", v:["Guaranteed","DECLINE","Not asked - Allowed","Not asked - Allowed","Not asked","Graded"]},
+{c:"Dementia", v:["Guaranteed Issue","DECLINE","DECLINE","DECLINE","DECLINE","DECLINE"]},
+{c:"Depression", v:["Not asked - Allowed","Not asked","If Bipolar - Graded","Not asked - Allowed","Not asked","Bipolar within 4 yrs - Graded"]},
+{c:"Diabetes", v:["Allowed - see Diabetic Complications","Allowed - see Diabetic Complications","Allowed - see Diabetic Complications","Insulin before 50 - ROP; else Immediate","Allowed - see Diabetic Complications","Diagnosed/treated before 50 - Graded"]},
+{c:"Diabetic Complications (Insulin Shock, Coma, Retinopathy, Nephropathy, Neuropathy)", v:["Within 2 yrs - Guaranteed Issue","Amputation - DECLINE; Coma/Shock/Neuro/Nephro/Retino - Modified","Shock/coma/amputation - Modified; others - Preferred","Diagnosed/treated for complications - ROP","Shock/coma/amputation - DECLINE; Neuro/PVD/PAD/Retino - Basic","Shock/coma - DECLINE; Retino/Nephro/Neuro - Graded"]},
+{c:"Dialysis", v:["Kidney Dialysis - Guaranteed Issue","Within 1 yr - DECLINE","DECLINE","DECLINE","Within 1 yr - DECLINE","DECLINE"]},
+{c:"Down's Syndrome", v:["Not asked - Allowed","See Mental Incapacity","Graded","See Mental Incapacity","Not asked","DECLINE"]},
+{c:"DUI", v:["Not asked - Allowed","Within 2 yrs - Modified","Within 2 yrs - Modified","Not asked - Allowed","Within 2 years","Not asked - Allowed"]},
+{c:"Emphysema (Chronic)", v:["Guaranteed Issue","Standard","Graded","Treated <2yr - ROP; <3yr - Graded","Standard","Graded"]},
+{c:"Epilepsy / Seizures", v:["Not asked - Allowed","Not asked","Not asked - Allowed","Within 3 yrs - Graded","Not asked","Not asked - Allowed"]},
+{c:"Felony", v:["Within 6 mos - Guaranteed Issue","Not asked","Not asked","Not asked - Allowed","Not asked","Convicted within 2 yrs or awaiting trial - Graded"]},
+{c:"Heart Attack", v:["Within 1 yr - Guaranteed Issue","<1yr - Modified; 1-2yr - Standard; >2yr - Preferred","Within 2 yrs - Modified","Within 2 yrs - ROP; <3yr - Graded","<1yr - Basic; <2yr - Standard","Within 1 yr - DECLINE; Within 2 yrs - Graded"]},
+{c:"Heart Surgery", v:["Within 1 yr - Guaranteed Issue","<1yr - Modified; 1-2yr - Standard; >2yr - Preferred","Within 2 yrs - Modified","Within 2 yrs - ROP; <3yr - Graded","<1yr - Basic; <2yr - Standard","Within 1 yr - DECLINE; Within 2 yrs - Graded"]},
+{c:"Heart Valve Replacement", v:["Within 1 yr - Guaranteed Issue","<1yr - Modified; 1-2yr - Standard; >2yr - Preferred","Within 2 yrs - Modified","Within 2 yrs - ROP; <3yr - Graded","<1yr - Basic; <2yr - Standard","Within 1 yr - DECLINE; Within 2 yrs - Graded"]},
+{c:"Hepatitis A", v:["Allowed","Within 2 yrs - Modified","Chronic/current - Graded","Chronic/treated <2yr - ROP","Not asked","Not asked - Allowed"]},
+{c:"Hepatitis B", v:["Guaranteed Issue","Within 2 yrs - Modified","Chronic/current - Graded","Chronic/treated <2yr - ROP","Standard","Not asked - Allowed"]},
+{c:"Hepatitis C", v:["Guaranteed Issue","Within 2 yrs - Modified","Chronic/current - Graded","Chronic/treated <2yr - ROP; <3yr - Graded","Standard","Graded"]},
+{c:"Huntington's Disease", v:["Not asked - Allowed","DECLINE","Not asked","Not asked - Allowed","Not asked","DECLINE"]},
+{c:"Illegal Drugs", v:["Within 2 yrs - Guaranteed Issue","Treatment within past 2 yrs - Modified","See Felony or DUI","Used within 2 yrs - ROP","Within 2 yrs - Basic","Within 2 yrs - Graded"]},
+{c:"Jail / Incarcerated", v:["DECLINE","Not asked","Not asked","DECLINE","Not asked","DECLINE"]},
+{c:"Kidney Disease / Disorder / Failure (also see Dialysis)", v:["Chronic - Guaranteed Issue","Graded (also see dialysis)","Graded (also see dialysis)","Dialysis - DECLINE; Failure/Disease - ROP","Standard (ask about dialysis)","DECLINE"]},
+{c:"Liver Disease", v:["Guaranteed Issue","Graded","Graded","Liver failure - DECLINE; disease <3yr - Graded","Standard","Cirrhosis - DECLINE"]},
+{c:"Lupus (Systemic Lupus Erythematosus)", v:["Not asked - Allowed","Graded","Graded","Treated/diagnosed <2yr - ROP","Standard","Within 4 yrs + Systemic - Graded"]},
+{c:"Melanoma", v:["Malignant - DECLINE","Within 3 yrs - Modified (excl. basal/squamous)","Within 3 yrs - Modified (excl. basal/squamous)","See Cancer","Basal cell - Preferred; else see Cancer","Within 2 yrs - DECLINE; Within 4 yrs - Graded"]},
+{c:"Mental Incapacity / Retardation", v:["Not asked - Allowed","Graded","Graded","DECLINE","Not asked","Not asked - Allowed"]},
+{c:"Multiple Sclerosis (MS)", v:["Not asked - Allowed","Not asked","Not asked","Diagnosed/treated <3yr - Graded","Preferred","Within 4 yrs - Graded"]},
+{c:"Neuropathy", v:["Diabetic/treated <2yr - Guaranteed Issue; non-diabetic - see med list","Due to diabetes - Modified; otherwise ok","See Diabetic Complications","Diabetic before 50 - ROP; non-diabetic - Immediate","Due to diabetes - Basic; otherwise ok","Diabetic before 50 - Graded; non-diabetic - allowed"]},
+{c:"Oxygen", v:["Within 6 mos - Guaranteed","Within 1 yr - DECLINE (CPAP OK)","DECLINE","DECLINE","Within 1 yr - DECLINE","DECLINE"]},
+{c:"Pacemaker / Defibrillator Implant", v:["Within 1 yr - Guaranteed Issue","<1yr - Modified; 1-2yr - Standard; >2yr - Preferred","Within 2 yrs - Modified","Received <2yr - ROP; <3yr - Graded","<1yr - Basic; <2yr - Standard; >2yr - Preferred","Check meds/heart conditions - could be Graded"]},
+{c:"Pancreatitis", v:["Not asked - Allowed","Not asked","Not asked - Allowed","Chronic/treated <2yr - ROP","Not asked","Not asked - Allowed"]},
+{c:"Parkinson's Disease", v:["Allowed","Standard","Graded","Treated/diagnosed <3yr - Graded","Standard if independent; else DECLINE","Within 4 yrs - Graded"]},
+{c:"Parole / Probation (currently)", v:["Within 6 mos - Guaranteed Issue","Not asked","Not asked","Not asked","Not asked","2 yrs convicted or awaiting trial - Graded"]},
+{c:"PAD / PVD (Peripheral Artery/Vascular Disease)", v:["Not asked - Allowed","Not asked","Not asked","Not asked - Allowed","See Diabetic Complication","Graded"]},
+{c:"PTSD", v:["Allowed","Not asked","Not asked","Not asked - Allowed","Not asked","Not asked - Allowed"]},
+{c:"Pulmonary Fibrosis", v:["Ask about oxygen","DECLINE","Ask about oxygen","Ask about oxygen","Ask about oxygen","Ask about oxygen"]},
+{c:"Rheumatoid Arthritis", v:["Not asked - Allowed","Not asked","Not asked","Not asked - Allowed","Not asked","Not asked - Allowed"]},
+{c:"Sarcoidosis", v:["Not asked - Allowed","Not asked","Not asked","Not asked - Allowed","Not asked","Graded"]},
+{c:"Schizophrenia", v:["Allowed","Preferred","Graded","Not asked - Allowed","Preferred","Treated/diagnosed <4yr - Graded"]},
+{c:"Seizures", v:["Allowed","Not asked","Not asked - Allowed","Within 3 yrs - Graded","Not asked","Not asked - Allowed"]},
+{c:"Sickle Cell Anemia", v:["Allowed","DECLINE","Graded","Not asked - Allowed","Not asked","DECLINE"]},
+{c:"Sleep Apnea", v:["Not asked - Allowed","Not asked","Not asked","See Oxygen Use","Not asked","Graded"]},
+{c:"Stent", v:["Within 1 yr - Guaranteed Issue","Not asked - see Heart Surgery","Within 2 yrs - Modified","Within 2 yrs - ROP; <3yr - Graded","<1yr - Basic; <2yr - Standard","Within 1 yr - DECLINE; Within 2 yrs - Graded"]},
+{c:"Stroke / TIA Attack", v:["Within 1 yr - Guaranteed Issue; TIA not asked","<1yr - Modified; 1-2yr - Standard; >2yr - Preferred","Within 2 yrs - Modified","Stroke/TIA <2yr - ROP; stroke <3yr - Graded","<1yr - Basic; <2yr - Standard","Within 2 yrs - Graded"]},
+{c:"Terminal Illness", v:["Death within 2 yrs - DECLINE","DECLINE","DECLINE","Death within 12 mos - DECLINE","DECLINE","Death within 12 mos - DECLINE"]},
+{c:"Organ Transplant", v:["Guaranteed Issue","DECLINE","DECLINE","DECLINE","DECLINE","DECLINE"]},
+{c:"Tuberculosis", v:["Not asked - Allowed","Not asked","Graded","Not asked - Allowed","Not asked","Not asked - Allowed"]},
+{c:"Ulcerative Colitis", v:["Not asked - Allowed","Not asked","Not asked - Allowed","Within 3 yrs - Graded","Not asked","Not asked - Allowed"]},
+{c:"Walker", v:["Within 6 mos - Guaranteed Issue","Not asked","Not asked","Not asked","Not asked","Not asked"]},
+{c:"Wheelchair / Electric Scooter / Cart", v:["Within 6 mos - Guaranteed Issue","Use wheelchair/scooter - DECLINE","Confined or diabetic - DECLINE","Due to illness/disease - DECLINE","Confined or diabetic - DECLINE","Due to illness/disease - DECLINE"]}
+];
+// classify a decision: good (write here / immediate), ok (graded/modified/needs review), bad (decline)
+function uwClass(t){
+  const s=(t||"").toLowerCase();
+  if(s.includes("decline") && !/graded|modified|rop|basic|within|allowed|standard|preferred|immediate|guaranteed/.test(s)) return "bad";
+  if(/not asked|allowed|preferred|standard|immediate|guaranteed/.test(s)) return "good";
+  return "ok";
+}
+function setUwSearch(v){ S.uwSearch=v; render(); const el=document.getElementById("uwSearch"); if(el){ el.focus(); try{ el.setSelectionRange(v.length,v.length); }catch(e){} } }
+function uwCard(r){
+  const items=r.v.map((d,i)=>({carrier:UWCARRIERS[i], d, cls:uwClass(d)}));
+  const rank={good:0,ok:1,bad:2};
+  const sorted=items.slice().sort((a,b)=>rank[a.cls]-rank[b.cls]);
+  const best=items.filter(x=>x.cls==="good").map(x=>x.carrier.split(" · ")[0]);
+  return `<div class="panel" style="padding:12px 16px;margin-bottom:12px">
+    <div style="font-weight:700;font-size:13.5px;margin-bottom:8px">${escapeHtml(r.c)}</div>
+    ${best.length?`<div class="muted" style="font-size:11px;margin-bottom:8px">✅ Write here: <b style="color:var(--accent)">${best.map(escapeHtml).join(", ")}</b></div>`:`<div class="muted" style="font-size:11px;margin-bottom:8px;color:var(--gold)">No immediate-coverage carrier — best available below</div>`}
+    ${sorted.map(x=>{const col=x.cls==="good"?"var(--accent)":x.cls==="bad"?"var(--red)":"var(--gold)";const dot=x.cls==="good"?"🟢":x.cls==="bad"?"🔴":"🟡";
+      return `<div style="display:flex;gap:8px;padding:6px 0;border-top:1px solid var(--rule);font-size:12.5px;align-items:baseline">
+        <div style="flex:0 0 160px"><b>${escapeHtml(x.carrier.split(" · ")[0])}</b><div class="muted" style="font-size:10px">${escapeHtml(x.carrier.split(" · ")[1]||"")}</div></div>
+        <div style="flex:1;color:${col}">${dot} ${escapeHtml(x.d)}</div>
+      </div>`;}).join("")}
+  </div>`;
+}
+function renderUnderwriting(){
+  const q=(S.uwSearch||"").trim().toLowerCase();
+  const list=q? UWGRID.filter(r=>r.c.toLowerCase().includes(q)) : UWGRID;
+  return `
+  <div class="panel">
+    <h2>Underwriting Guide <span class="sub">search a health condition → see which carrier to write</span></h2>
+    <input id="uwSearch" value="${escapeHtml(S.uwSearch||'')}" oninput="setUwSearch(this.value)" placeholder="🔍 Search a condition — diabetes, cancer, copd, stroke, afib…" style="width:100%;padding:11px 12px;border:1px solid var(--rule);border-radius:8px;font-size:14px;margin-bottom:6px">
+    <div class="muted" style="font-size:11px">${list.length} condition${list.length===1?'':'s'} &nbsp; · &nbsp; 🟢 write here (immediate/full) &nbsp; 🟡 graded / modified / review &nbsp; 🔴 decline &nbsp; · &nbsp; Family First Life FE grid</div>
+  </div>
+  ${list.length? list.map(uwCard).join("") : `<div class="panel"><div class="empty">No condition matches "${escapeHtml(q)}". Try a shorter word (e.g. "heart", "cancer", "diab").</div></div>`}
+  `;
+}
+
+let S = { leads:[], deals:[], agents:[], me:null, session:null, view:"dash", boardMode:"agent", cpl:1, poolSort:{key:"name",dir:"asc"}, poolStateFilter:"", poolSearch:"", calRef:null, uwSearch:"" };
 const DISPOSITIONS = ["No answer","Voicemail","Callback","Not interested","Wrong number","DNC"];
 
 /* ---------- Supabase data layer (per-row writes; no cross-agent clobbering) ---------- */
@@ -411,7 +531,7 @@ function setPoolSearch(v){
 function clearPoolFilters(){ S.poolSearch=""; S.poolStateFilter=""; render(); }
 
 /* ---------- render router ---------- */
-const TITLES = {dash:"Dashboard",pool:"Lead Pool",import:"Import Leads",mine:"My Pipeline",followups:"Follow-ups",calendar:"Calendar",board:"Leaderboard",command:"Command Center",admin:"Admin"};
+const TITLES = {dash:"Dashboard",pool:"Lead Pool",import:"Import Leads",mine:"My Pipeline",followups:"Follow-ups",calendar:"Calendar",underwriting:"Underwriting Guide",board:"Leaderboard",command:"Command Center",admin:"Admin"};
 function render(){
   document.getElementById("ptitle").textContent = TITLES[S.view];
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("on", b.dataset.v===S.view));
@@ -422,6 +542,7 @@ function render(){
   else if(S.view==="mine") v.innerHTML=renderMine();
   else if(S.view==="followups") v.innerHTML=renderFollowups();
   else if(S.view==="calendar") v.innerHTML=renderCalendar();
+  else if(S.view==="underwriting") v.innerHTML=renderUnderwriting();
   else if(S.view==="board") v.innerHTML=renderBoard();
   else if(S.view==="command") v.innerHTML=renderCommand();
   else if(S.view==="admin") v.innerHTML=renderAdmin();
