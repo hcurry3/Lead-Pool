@@ -355,7 +355,7 @@ const UWSYN = [
   {cond:"bipolar", label:"Bipolar", terms:["bipolar","manic depressive"]},
   {cond:"schizophrenia", label:"Schizophrenia", terms:["schizophrenia","schizophrenic"]},
   {cond:"aids / hiv", label:"AIDS / HIV", terms:["hiv","aids","positive for hiv"]},
-  {cond:"als", label:"ALS", terms:["als","lou gehrig","lou gehrig's"]},
+  {cond:"als (lou", label:"ALS", terms:["als","lou gehrig","lou gehrig's"]},
   {cond:"multiple sclerosis", label:"Multiple Sclerosis", terms:["multiple sclerosis"]},
   {cond:"parkinson", label:"Parkinson's", terms:["parkinson","parkinsons","tremors"]},
   {cond:"terminal illness", label:"Terminal Illness", terms:["terminal","hospice","dying","months to live","end stage","end-stage"]},
@@ -453,14 +453,17 @@ function renderUnderwriting(){
   const q=(S.uwSearch||"").trim().toLowerCase();
   const syn = q? uwSynonyms(q) : [];
   const synKeys = syn.map(s=>s.cond);
+  // Short queries (≤3 chars like "als") match on word boundaries so they don't hit
+  // substrings of unrelated conditions ("p-als-y", "al-so see dialysis").
+  const qHit = c => q.length<=3 ? new RegExp("\\b"+q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\b").test(c) : c.includes(q);
   const rows=UWGRID.map((r,idx)=>({r,idx})).filter(x=>{
     if(!q) return true;
     const c=x.r.c.toLowerCase();
-    return c.includes(q) || synKeys.some(k=>c.includes(k));
+    return qHit(c) || synKeys.some(k=>c.includes(k));
   });
   const meds = q? medMatches(q) : [];
   // Only show the "interpreting" hint when the plain-language phrase wasn't itself a direct condition name.
-  const directHit = rows.some(x=>x.r.c.toLowerCase().includes(q));
+  const directHit = rows.some(x=>qHit(x.r.c.toLowerCase()));
   const synHint = (q && syn.length && !directHit)? syn : [];
   const nothing = q && !rows.length && !meds.length;
   return `
@@ -647,7 +650,8 @@ const meObj  = () => agentById(S.me) || {name:"—",team:"—",upline:"—"};
 function withinDays(dateStr, days){
   if(!dateStr) return false;
   const d=new Date(dateStr), now=new Date();
-  return (now - d)/(1000*60*60*24) <= days;
+  const diff=(now - d)/(1000*60*60*24);
+  return diff>=0 && diff<=days;   // ignore future-dated entries (would otherwise count as "this week")
 }
 function dialable(){ return S.leads.filter(l=>(l.status==="available"||l.status==="reopened") && !l.dnc); }
 // "My Pipeline" = open leads I've personally made contact with (called),
@@ -810,7 +814,7 @@ const COMM=[
 {carrier:"Ethos", product:"TruStage TAWL", rates:[120,120,115,110,105,100,95,90,85,82.5,80,77.5,75,72.5,65,60,55]},
 {carrier:"Ethos", product:"TruStage SITL", rates:[120,115,110,105,100,95,90,85,80,75,70,65,60,55,50,50,50]},
 {carrier:"Ethos", product:"TruStage GAWL", rates:[30,27.5,25,22.5,20,17.5,15,12.5,10,7.5,5,2.5,2.5,2.5,2.5,2.5,2.5]},
-{carrier:"Ethos", product:"Ethos IUL", rates:[125,132,115,110,105,100,95,90,85,80,75,70,65,60,55,50,45]},
+{carrier:"Ethos", product:"Ethos IUL", rates:[125,120,115,110,105,100,95,90,85,80,75,70,65,60,55,50,45]},
 {carrier:"Ethos", product:"Ameritas SI Term", rates:[120,117.5,115,112.5,110,107.5,105,102.5,100,97.5,95,92.5,90,87.5,85,82.5,80]},
 {carrier:"Ethos", product:"Accidental Death", rates:[85,85,80,75,70,65,60,55,50,45,40,35,30,25,25,25,25]},
 {carrier:"Foresters", product:"Strong Foundation", rates:[130,130,125,120,115,110,105,105,100,95,90,85,80,75,70,65,60]},
@@ -946,7 +950,7 @@ function renderDash(){
   <div class="panel">
     <h2>Top Closers <span class="sub">this week's standings</span></h2>
     ${board.length? `<table><thead><tr><th>#</th><th>Agent</th><th>Team</th><th>Deals</th><th>AP</th></tr></thead><tbody>
-      ${board.map((r,i)=>`<tr><td><span class="rank r${i+1}">${i+1}</span></td><td><b>${escapeHtml(r.key)}</b></td><td>${r.team||'—'}</td><td>${r.count}</td><td><b>${MONEY(r.ap)}</b></td></tr>`).join("")}
+      ${board.map((r,i)=>`<tr><td><span class="rank r${i+1}">${i+1}</span></td><td><b>${escapeHtml(r.key)}</b></td><td>${escapeHtml(r.team||'—')}</td><td>${r.count}</td><td><b>${MONEY(r.ap)}</b></td></tr>`).join("")}
     </tbody></table>` : `<div class="empty">No deals yet — be the first on the board.</div>`}
   </div>
   <div class="panel">
@@ -1140,7 +1144,7 @@ function renderBoard(){
       ${rows.map((r,i)=>`<tr>
         <td><span class="rank r${i+1}">${i+1}</span></td>
         <td><b>${escapeHtml(r.key)}</b></td>
-        <td><span class="pill">${teamOf[r.key]||'—'}</span></td>
+        <td><span class="pill">${escapeHtml(teamOf[r.key]||'—')}</span></td>
         <td><b style="color:var(--accent)">${r.dials}</b></td>
       </tr>`).join("")}
     </tbody></table>
@@ -1161,7 +1165,7 @@ function renderBoard(){
       ${rows.map((r,i)=>`<tr>
         <td><span class="rank r${i+1}">${i+1}</span></td>
         <td><b>${escapeHtml(r.key)}</b></td>
-        ${mode==='agent'?`<td><span class="pill">${r.team||'—'}</span></td>`:''}
+        ${mode==='agent'?`<td><span class="pill">${escapeHtml(r.team||'—')}</span></td>`:''}
         <td>${r.count}</td><td><b style="color:var(--accent)">${MONEY(r.ap)}</b></td>
         <td class="muted">${MONEY(Math.round(r.ap/r.count))}</td>
       </tr>`).join("")}
@@ -1213,7 +1217,7 @@ function renderCommand(){
   <div class="panel">
     <h2>Agent Performance</h2>
     ${agg.length?`<table><thead><tr><th>#</th><th>Agent</th><th>Team</th><th>Deals</th><th>AP</th></tr></thead><tbody>
-      ${agg.map((r,i)=>`<tr><td><span class="rank r${i+1}">${i+1}</span></td><td><b>${escapeHtml(r.key)}</b></td><td><span class="pill">${r.team||'—'}</span></td><td>${r.count}</td><td><b>${MONEY(r.ap)}</b></td></tr>`).join("")}
+      ${agg.map((r,i)=>`<tr><td><span class="rank r${i+1}">${i+1}</span></td><td><b>${escapeHtml(r.key)}</b></td><td><span class="pill">${escapeHtml(r.team||'—')}</span></td><td>${r.count}</td><td><b>${MONEY(r.ap)}</b></td></tr>`).join("")}
     </tbody></table>`:`<div class="empty">No deals yet.</div>`}
   </div>
   <div class="panel">
@@ -1370,17 +1374,19 @@ async function confirmClose(id){
   S.deals.push(deal);
   l.status="closed"; l.current_owner=S.me;
   if(!l.touched_by.includes(m.name)) l.touched_by.push(m.name);
-  await saveLead(l); closeModal(); S.view="board"; render();
+  const leadOk = await saveLead(l);
+  if(!leadOk) alert("Sale recorded, but the lead status didn't update. Click ↻ Refresh and re-open the lead to mark it closed so it doesn't reappear in the pool.");
+  closeModal(); S.view="board"; render();
 }
 
 async function chargeback(dealId){
   const d=S.deals.find(x=>x.id===dealId); if(!d) return;
   d.status="chargeback";
-  await saveDeal(d);
+  if(!await saveDeal(d)){ d.status="active"; return; }   // write failed → don't reopen the lead
   if(d.lead_id){ const l=S.leads.find(x=>x.id===d.lead_id); if(l){ l.status="reopened"; l.current_owner=null; await saveLead(l); } }
   render();
 }
-async function del(id){ await deleteLead(id); S.leads=S.leads.filter(l=>l.id!==id); render(); }
+async function del(id){ if(!await deleteLead(id)) return; S.leads=S.leads.filter(l=>l.id!==id); render(); }
 
 async function doImport(){
   const raw=document.getElementById("impBox").value.trim();
@@ -1676,7 +1682,7 @@ function sortLeads(leads){
   // to the bottom (ascending) so booked leads surface first.
   const val=l=>{
     if(key==="age") return Number(l.age)||0;                         // numeric
-    if(key==="appt") return l.followup_date? (l.followup_date+(l.followup_time||"")) : "9999-99-99";
+    if(key==="appt") return l.followup_date? (l.followup_date+"|"+String(l.followup_time?timeToMin(l.followup_time):9999).padStart(4,"0")) : "9999-99-99";
     return String(l[key]||"").toLowerCase();
   };
   return leads.slice().sort((a,b)=>{
