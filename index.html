@@ -629,6 +629,12 @@ function dialsBy(sinceMs){
   }));
   return Object.entries(m).map(([key,dials])=>({key,dials})).sort((a,b)=>b.dials-a.dials);
 }
+// Aggregate currently-set appointments per agent (by who set them) → [{key, appts}] sorted desc.
+function apptsBy(){
+  const m={};
+  S.leads.forEach(l=>{ if(l.followup_kind==="appointment" && l.followup_set_by){ m[l.followup_set_by]=(m[l.followup_set_by]||0)+1; } });
+  return Object.entries(m).map(([key,appts])=>({key,appts})).sort((a,b)=>b.appts-a.appts);
+}
 // Tap the dial badge → see who you've dialed (newest first).
 function openDials(){
   const me=meName(); const calls=[];
@@ -1025,7 +1031,30 @@ function renderBoard(){
         <button class="${mode==='team'?'on':''}" onclick="setBoard('team')">By Team</button>
         <button class="${mode==='upline'?'on':''}" onclick="setBoard('upline')">By Upline</button>
         <button class="${mode==='dials'?'on':''}" onclick="setBoard('dials')">📞 Dials Today</button>
+        <button class="${mode==='appts'?'on':''}" onclick="setBoard('appts')">📅 Appointments</button>
       </div>`;
+  if(mode==="appts"){
+    const teamOf={}; S.agents.forEach(a=>{ teamOf[a.name]=a.team; });
+    const rows=apptsBy();
+    const total=rows.reduce((s,r)=>s+r.appts,0);
+    return `
+  <div class="panel">
+    <div class="row" style="justify-content:space-between;margin-bottom:14px">
+      <h2 style="margin:0">Leaderboard <span class="sub">📅 ${total} appointment${total===1?'':'s'} set across the floor</span></h2>
+      ${seg}
+    </div>
+    ${rows.length? `<table><thead><tr><th>#</th><th>Agent</th><th>Team</th><th>Appointments Set</th></tr></thead><tbody>
+      ${rows.map((r,i)=>`<tr>
+        <td><span class="rank r${i+1}">${i+1}</span></td>
+        <td><b>${escapeHtml(r.key)}</b></td>
+        <td><span class="pill">${escapeHtml(teamOf[r.key]||'—')}</span></td>
+        <td><b style="color:var(--blue)">${r.appts}</b></td>
+      </tr>`).join("")}
+    </tbody></table>
+    <div class="muted" style="margin-top:10px">📅 Most appointments set: <b>${escapeHtml(rows[0].key)}</b> with ${rows[0].appts} — booked pipeline wins deals.</div>
+    ` : `<div class="empty">No appointments set yet — open a lead and hit "Set appointment".</div>`}
+  </div>`;
+  }
   if(mode==="dials"){
     const teamOf={}; S.agents.forEach(a=>{ teamOf[a.name]=a.team; });
     const rows=dialsBy(startOfTodayMs());
