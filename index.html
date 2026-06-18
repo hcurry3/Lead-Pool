@@ -327,6 +327,51 @@ const MEDS = [
 {name:"Methadone", aka:[], treats:"Pain / addiction treatment", cond:"Alcohol / Drug Abuse", note:"Ask if for pain or addiction"},
 {name:"Suboxone", aka:["buprenorphine"], treats:"Opioid addiction treatment", cond:"Alcohol / Drug Abuse"}
 ];
+// Plain-language → underwriting condition. Lets an agent type how a client actually
+// describes things ("lost both legs", "on oxygen", "mini stroke", "memory loss") and
+// still land on the right grid row. Each `cond` is a lowercase substring of a UWGRID condition.
+const UWSYN = [
+  {cond:"amputation", label:"Amputation", terms:["amputat","amputee","lost a leg","lost his leg","lost her leg","lost their leg","lost leg","lost legs","lost both legs","lost both his legs","lost both her legs","both legs","lost his legs","lost her legs","lost a foot","lost foot","lost feet","lost both feet","lost an arm","lost arm","lost a hand","lost hand","lost a limb","lost limb","lost a toe","missing limb","missing leg","missing foot","missing arm","no legs","leg removed","foot removed","limb removed","leg amputated","foot amputated","leg cut off","cut off his leg","cut off her leg","prosthetic leg","prosthetic limb","prosthetic"]},
+  {cond:"wheelchair", label:"Wheelchair / Scooter", terms:["wheelchair","wheel chair","can't walk","cannot walk","cant walk","unable to walk","bedridden","bed ridden","bed-ridden","confined to bed","confined to a bed","paralyzed","paralysis","paraplegic","quadriplegic","scooter","electric cart","mobility scooter"]},
+  {cond:"walker", label:"Walker", terms:["walker","uses a walker","walks with a walker"]},
+  {cond:"oxygen", label:"Oxygen Use", terms:["oxygen","on o2"," o2 ","uses oxygen","oxygen tank","home oxygen","supplemental oxygen"]},
+  {cond:"dialysis", label:"Dialysis", terms:["dialysis","kidney machine"]},
+  {cond:"alzheimer", label:"Alzheimer's / Dementia", terms:["memory loss","can't remember","cant remember","forgetful","forgets things","senile","senility","cognitive decline","dementia","alzheimer"]},
+  {cond:"congestive heart failure", label:"Congestive Heart Failure", terms:["heart failure","chf","congestive","fluid around the heart","fluid around heart","enlarged heart"]},
+  {cond:"heart attack", label:"Heart Attack", terms:["heart attack","had a heart attack","widow maker","myocardial"]},
+  {cond:"stroke", label:"Stroke / TIA", terms:["stroke","mini stroke","mini-stroke","had a stroke","tia"]},
+  {cond:"cancer", label:"Cancer", terms:["cancer","tumor","malignant","chemo","chemotherapy","radiation treatment","oncology"]},
+  {cond:"copd", label:"COPD", terms:["copd","chronic obstructive","trouble breathing","hard to breathe","short of breath"]},
+  {cond:"emphysema", label:"Emphysema", terms:["emphysema"]},
+  {cond:"diabetes", label:"Diabetes", terms:["diabetes","diabetic","high blood sugar","high sugar","sugar problem","takes insulin","on insulin","insulin"]},
+  {cond:"diabetic complications", label:"Diabetic Complications", terms:["diabetic neuropathy","diabetic coma","insulin shock","retinopathy","nephropathy"]},
+  {cond:"afib", label:"AFib", terms:["afib","a-fib","atrial fibrillation","irregular heartbeat","irregular heart beat"]},
+  {cond:"assisted living", label:"Assisted Living / LTC", terms:["nursing home","assisted living","long term care","long-term care","care facility","group home"]},
+  {cond:"pacemaker", label:"Pacemaker / Defibrillator", terms:["pacemaker","pace maker","defibrillator"]},
+  {cond:"stent", label:"Stent", terms:["stent","stents"]},
+  {cond:"neuropathy", label:"Neuropathy", terms:["neuropathy","nerve damage","numb feet","numbness in feet","numb hands"]},
+  {cond:"epilepsy / seizures", label:"Epilepsy / Seizures", terms:["seizure","seizures","epilepsy","epileptic","convulsions"]},
+  {cond:"depression", label:"Depression", terms:["depression","depressed"]},
+  {cond:"bipolar", label:"Bipolar", terms:["bipolar","manic depressive"]},
+  {cond:"schizophrenia", label:"Schizophrenia", terms:["schizophrenia","schizophrenic"]},
+  {cond:"aids / hiv", label:"AIDS / HIV", terms:["hiv","aids","positive for hiv"]},
+  {cond:"als", label:"ALS", terms:["als","lou gehrig","lou gehrig's"]},
+  {cond:"multiple sclerosis", label:"Multiple Sclerosis", terms:["multiple sclerosis"]},
+  {cond:"parkinson", label:"Parkinson's", terms:["parkinson","parkinsons","tremors"]},
+  {cond:"terminal illness", label:"Terminal Illness", terms:["terminal","hospice","dying","months to live","end stage","end-stage"]},
+  {cond:"organ transplant", label:"Organ Transplant", terms:["organ transplant","new kidney","new heart","new liver","transplanted"]},
+  {cond:"sleep apnea", label:"Sleep Apnea", terms:["sleep apnea","cpap"]},
+  {cond:"blood clots", label:"Blood Clots", terms:["blood clot","blood clots","dvt","clot in leg","clot in lung"]},
+  {cond:"liver disease", label:"Liver Disease", terms:["liver disease","liver problem","liver failure"]},
+  {cond:"cirrhosis", label:"Cirrhosis", terms:["cirrhosis"]},
+  {cond:"kidney disease", label:"Kidney Disease", terms:["kidney disease","kidney failure","renal failure","renal disease"]}
+];
+// Return [{cond,label}] for synonym phrases found anywhere in the query.
+function uwSynonyms(q){
+  const out=[]; const pad=" "+q+" ";
+  UWSYN.forEach(s=>{ if(s.terms.some(t=> pad.includes(t) || q.includes(t))){ if(!out.some(o=>o.cond===s.cond)) out.push({cond:s.cond,label:s.label}); } });
+  return out;
+}
 function medMatches(q){ return MEDS.filter(m=> m.name.toLowerCase().includes(q) || (m.aka||[]).some(a=>a.toLowerCase().includes(q))); }
 function medCard(m){
   const idx = m.cond? UWGRID.findIndex(r=>r.c.toLowerCase().includes(m.cond.toLowerCase())) : -1;
@@ -406,14 +451,24 @@ function renderUwClientPanel(){
 }
 function renderUnderwriting(){
   const q=(S.uwSearch||"").trim().toLowerCase();
-  const rows=UWGRID.map((r,idx)=>({r,idx})).filter(x=> !q || x.r.c.toLowerCase().includes(q));
+  const syn = q? uwSynonyms(q) : [];
+  const synKeys = syn.map(s=>s.cond);
+  const rows=UWGRID.map((r,idx)=>({r,idx})).filter(x=>{
+    if(!q) return true;
+    const c=x.r.c.toLowerCase();
+    return c.includes(q) || synKeys.some(k=>c.includes(k));
+  });
   const meds = q? medMatches(q) : [];
+  // Only show the "interpreting" hint when the plain-language phrase wasn't itself a direct condition name.
+  const directHit = rows.some(x=>x.r.c.toLowerCase().includes(q));
+  const synHint = (q && syn.length && !directHit)? syn : [];
   const nothing = q && !rows.length && !meds.length;
   return `
   <div class="panel">
     <h2>Underwriting Guide <span class="sub">search a condition or medication → which carrier writes the client</span></h2>
-    <input id="uwSearch" value="${escapeHtml(S.uwSearch||'')}" oninput="setUwSearch(this.value)" placeholder="🔍 Search a condition or Rx — diabetes, eliquis, metformin, copd, keppra…" style="width:100%;padding:11px 12px;border:1px solid var(--rule);border-radius:8px;font-size:14px;margin-bottom:6px">
-    <div class="muted" style="font-size:11px">Type a <b>medication</b> to find the condition it points to, or a condition directly. <b>➕ Add</b> a client's conditions to see which carrier approves them all &nbsp;·&nbsp; 🟢 immediate &nbsp; 🟡 graded/modified &nbsp; 🔴 decline. Guide only — confirm with the client.</div>
+    <input id="uwSearch" value="${escapeHtml(S.uwSearch||'')}" oninput="setUwSearch(this.value)" placeholder="🔍 Condition, medication, or plain words — e.g. “lost both legs”, “on oxygen”, eliquis, copd…" style="width:100%;padding:11px 12px;border:1px solid var(--rule);border-radius:8px;font-size:14px;margin-bottom:6px">
+    <div class="muted" style="font-size:11px">Type how the client describes it (<b>“lost both legs”</b>, <b>“mini stroke”</b>, <b>“memory loss”</b>), a medication, or a condition. <b>➕ Add</b> a client's conditions to see which carrier approves them all &nbsp;·&nbsp; 🟢 immediate &nbsp; 🟡 graded/modified &nbsp; 🔴 decline. Guide only — confirm with the client.</div>
+    ${synHint.length? `<div style="margin-top:8px;font-size:12.5px;background:#eef3f1;border-radius:8px;padding:8px 11px">🔎 Reading <b>“${escapeHtml(q)}”</b> as: ${synHint.map(s=>`<b style="color:var(--blue)">${escapeHtml(s.label)}</b>`).join(", ")}</div>`:''}
   </div>
   ${renderUwClientPanel()}
   ${meds.map(medCard).join("")}
