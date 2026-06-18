@@ -1053,7 +1053,23 @@ function renderBoard(){
     </tbody></table>
     <div class="muted" style="margin-top:10px">📅 Most appointments set: <b>${escapeHtml(rows[0].key)}</b> with ${rows[0].appts} — booked pipeline wins deals.</div>
     ` : `<div class="empty">No appointments set yet — open a lead and hit "Set appointment".</div>`}
-  </div>`;
+  </div>
+  ${isOwner()? (()=>{
+    const appts=S.leads.filter(l=>l.followup_kind==="appointment" && l.followup_date)
+      .sort((a,b)=> a.followup_date<b.followup_date?-1 : a.followup_date>b.followup_date?1 : timeToMin(a.followup_time)-timeToMin(b.followup_time));
+    return `<div class="panel">
+    <h2>All Appointments <span class="sub">admin view · who each appointment is with</span></h2>
+    ${appts.length? `<table><thead><tr><th>When</th><th>Client</th><th>Phone</th><th>State</th><th>Set by</th><th>Team</th></tr></thead><tbody>
+      ${appts.map(l=>`<tr>
+        <td><b>${fmtDate(l.followup_date)}</b>${l.followup_time?` <span class="muted">${escapeHtml(l.followup_time)}</span>`:''}</td>
+        <td><a href="#" onclick="openLead('${l.id}');return false"><b>${escapeHtml(l.name||'—')}</b></a></td>
+        <td class="muted">${escapeHtml(l.phone||'—')}</td>
+        <td>${escapeHtml(l.state||'—')}</td>
+        <td><b>${escapeHtml(l.followup_set_by||'—')}</b></td>
+        <td><span class="pill">${escapeHtml(teamOf[l.followup_set_by]||'—')}</span></td>
+      </tr>`).join("")}
+    </tbody></table>` : `<div class="empty">No appointments on the calendar.</div>`}
+  </div>`; })() : ''}`;
   }
   if(mode==="dials"){
     const teamOf={}; S.agents.forEach(a=>{ teamOf[a.name]=a.team; });
